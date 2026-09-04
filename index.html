@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Dune Coast GP</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="viewport"></canvas>
+      <div id="ui-root"></div>
+      <div id="loading-screen">
+        <div class="loading-card">
+          <h1>DUNE&nbsp;COAST&nbsp;GP</h1>
+          <div class="loading-bar"><div class="loading-bar-fill" id="loading-bar-fill"></div></div>
+          <p id="loading-label">Loading assets&hellip;</p>
+        </div>
+      </div>
+      <div id="start-screen" class="hidden">
+        <div class="start-card">
+          <h1>DUNE&nbsp;COAST&nbsp;GP</h1>
+          <p>사막과 해안을 잇는 순환 서킷 &middot; 3랩 레이스</p>
+          <ul class="controls-help">
+            <li><b>W / ↑</b> 가속</li>
+            <li><b>S / ↓</b> 브레이크 &amp; 후진</li>
+            <li><b>A D / ← →</b> 조향</li>
+            <li><b>Space</b> 핸드브레이크 (드리프트)</li>
+            <li><b>R</b> 차량 리셋</li>
+          </ul>
+          <button id="start-button">레이스 시작</button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

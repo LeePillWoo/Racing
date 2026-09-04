@@ -1,0 +1,377 @@
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #05070a;
+  font-family: "Segoe UI", "Pretendard", -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #eef2f6;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#app {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+}
+
+#viewport {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+#ui-root {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ---------- loading / start screens ---------- */
+
+#loading-screen,
+#start-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, #1b2230 0%, #05070a 75%);
+  z-index: 50;
+}
+
+.loading-card,
+.start-card {
+  text-align: center;
+  padding: 40px 56px;
+  border-radius: 18px;
+  background: rgba(10, 14, 20, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.loading-card h1,
+.start-card h1 {
+  margin: 0 0 18px;
+  font-size: 2.4rem;
+  letter-spacing: 0.12em;
+  font-weight: 800;
+  background: linear-gradient(90deg, #ffd27a, #ff8a5c 45%, #4fc3ff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.loading-bar {
+  width: 320px;
+  height: 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+  margin: 0 auto 14px;
+}
+
+.loading-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #ffb15c, #ff5c8a);
+  transition: width 0.25s ease;
+}
+
+#loading-label {
+  margin: 0;
+  opacity: 0.75;
+  font-size: 0.9rem;
+  letter-spacing: 0.04em;
+}
+
+.start-card p {
+  margin: 0 0 20px;
+  opacity: 0.8;
+}
+
+.controls-help {
+  list-style: none;
+  margin: 0 0 26px;
+  padding: 14px 18px;
+  text-align: left;
+  display: inline-block;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  font-size: 0.92rem;
+  line-height: 1.9;
+}
+
+.controls-help b {
+  display: inline-block;
+  min-width: 88px;
+  color: #ffd27a;
+}
+
+#start-button {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  padding: 14px 42px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  border-radius: 999px;
+  color: #10131a;
+  background: linear-gradient(90deg, #ffd27a, #ff8a5c);
+  box-shadow: 0 8px 24px rgba(255, 138, 92, 0.35);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+#start-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px rgba(255, 138, 92, 0.45);
+}
+
+#start-button:active {
+  transform: translateY(0);
+}
+
+/* ---------- HUD ---------- */
+
+.hud-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-top-left {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hud-panel {
+  background: rgba(8, 10, 16, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 10px 16px;
+  backdrop-filter: blur(4px);
+}
+
+.hud-laptime {
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.hud-laptime .label,
+.hud-position .label {
+  font-size: 0.68rem;
+  opacity: 0.6;
+  letter-spacing: 0.1em;
+  display: block;
+  margin-bottom: 2px;
+}
+
+.hud-sublap {
+  font-size: 0.82rem;
+  opacity: 0.7;
+  margin-top: 2px;
+}
+
+.hud-position {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: #ffd27a;
+}
+
+.hud-lapcount {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 8px 22px;
+}
+
+.hud-bottom-right {
+  position: absolute;
+  bottom: 18px;
+  right: 18px;
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.speedo {
+  position: relative;
+  width: 168px;
+  height: 168px;
+}
+
+.speedo canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.speedo-readout {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.speedo-value {
+  font-size: 2.1rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.speedo-unit {
+  font-size: 0.65rem;
+  opacity: 0.6;
+  letter-spacing: 0.15em;
+  margin-top: 2px;
+}
+
+.speedo-gear {
+  position: absolute;
+  bottom: 30px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #ffd27a;
+  opacity: 0.9;
+}
+
+.minimap-wrap {
+  width: 176px;
+  height: 176px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(8, 10, 16, 0.55);
+  backdrop-filter: blur(4px);
+}
+
+.minimap-wrap canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.hud-standings {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  min-width: 190px;
+  padding: 10px 14px;
+}
+
+.hud-standings .label {
+  font-size: 0.68rem;
+  opacity: 0.6;
+  letter-spacing: 0.1em;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.standing-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 0.86rem;
+  opacity: 0.85;
+}
+
+.standing-row.is-player {
+  color: #ffd27a;
+  font-weight: 700;
+  opacity: 1;
+}
+
+.standing-rank {
+  width: 18px;
+  opacity: 0.6;
+}
+
+.standing-name {
+  flex: 1;
+}
+
+.drift-indicator {
+  position: absolute;
+  bottom: 18px;
+  left: 18px;
+  padding: 8px 18px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: #ff5c8a;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.drift-indicator.active {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.finish-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 7, 10, 0.6);
+  backdrop-filter: blur(4px);
+  pointer-events: auto;
+}
+
+.finish-card {
+  text-align: center;
+  padding: 36px 52px;
+  border-radius: 18px;
+  background: rgba(10, 14, 20, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.finish-card h2 {
+  margin: 0 0 8px;
+  font-size: 1.8rem;
+  color: #ffd27a;
+}
+
+.finish-card p {
+  opacity: 0.75;
+  margin: 0 0 22px;
+}
+
+.fps-counter {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.72rem;
+  opacity: 0.4;
+  letter-spacing: 0.06em;
+}
