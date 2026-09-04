@@ -144,6 +144,81 @@ export function createWaterNoiseTexture(): THREE.CanvasTexture {
   return texture;
 }
 
+/** Repeating tread-block pattern wrapped around a tire cylinder (V = around the circumference). */
+export function createTireTreadTexture(): THREE.CanvasTexture {
+  const w = 64;
+  const h = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d")!;
+
+  ctx.fillStyle = "#0a0a0a";
+  ctx.fillRect(0, 0, w, h);
+
+  const blockRows = 16;
+  const rowH = h / blockRows;
+  ctx.fillStyle = "#1c1c1c";
+  for (let i = 0; i < blockRows; i++) {
+    const y = i * rowH;
+    const offset = i % 2 === 0 ? 0 : w * 0.18;
+    ctx.fillRect(-w + offset, y + rowH * 0.12, w * 0.42, rowH * 0.76);
+    ctx.fillRect(offset, y + rowH * 0.12, w * 0.42, rowH * 0.76);
+    ctx.fillRect(w + offset, y + rowH * 0.12, w * 0.42, rowH * 0.76);
+  }
+
+  ctx.strokeStyle = "rgba(0,0,0,0.6)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(w / 2, 0);
+  ctx.lineTo(w / 2, h);
+  ctx.stroke();
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(1, 10);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+/** Soft, wispy alpha-mapped cloud blobs for a scrolling cloud layer beneath the sky dome. */
+export function createCloudTexture(): THREE.CanvasTexture {
+  const size = 512;
+  const { canvas, ctx } = makeCanvas(size);
+  const rand = mulberry32(909);
+  ctx.clearRect(0, 0, size, size);
+
+  const puff = (cx: number, cy: number, r: number, alpha: number) => {
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    grad.addColorStop(0, `rgba(255,255,255,${alpha})`);
+    grad.addColorStop(0.6, `rgba(255,255,255,${alpha * 0.5})`);
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+  };
+
+  const clusterCount = 9;
+  for (let c = 0; c < clusterCount; c++) {
+    const cx = rand() * size;
+    const cy = rand() * size * 0.6 + size * 0.1;
+    const puffs = 5 + Math.floor(rand() * 6);
+    for (let i = 0; i < puffs; i++) {
+      const ox = (rand() - 0.5) * 110;
+      const oy = (rand() - 0.5) * 40;
+      const r = 30 + rand() * 55;
+      puff(cx + ox, cy + oy, r, 0.35 + rand() * 0.35);
+    }
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  return texture;
+}
+
 /** Radial soft dot used as a billboard sprite for dust / smoke particles. */
 export function createSoftDotTexture(): THREE.CanvasTexture {
   const size = 64;

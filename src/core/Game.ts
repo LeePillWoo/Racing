@@ -11,6 +11,8 @@ import { ChaseCamera } from "../camera/ChaseCamera";
 import { RaceManager, Racer } from "../race/RaceManager";
 import { AIController, randomAIPersonality } from "../ai/AIController";
 import { HUD } from "../ui/HUD";
+import { PostProcessing } from "./PostProcessing";
+import { clamp } from "../utils/MathUtils";
 
 const TOTAL_LAPS = 3;
 const AI_NAMES = ["Falcon", "Viper", "Scorpion", "Mirage", "Comet"];
@@ -28,6 +30,7 @@ export class Game {
   private readonly camera: THREE.PerspectiveCamera;
   private readonly input = new InputManager();
   private readonly chaseCamera: ChaseCamera;
+  private readonly postFX: PostProcessing;
 
   private physics!: PhysicsWorld;
   private path!: TrackPath;
@@ -56,6 +59,7 @@ export class Game {
 
     this.camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.1, 2500);
     this.chaseCamera = new ChaseCamera(this.camera);
+    this.postFX = new PostProcessing(this.renderer, this.scene, this.camera, window.innerWidth, window.innerHeight);
 
     window.addEventListener("resize", this.onResize);
     this.onResize();
@@ -67,6 +71,7 @@ export class Game {
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.postFX.setSize(w, h);
   };
 
   async load(onProgress: (fraction: number, label: string) => void): Promise<void> {
@@ -149,7 +154,7 @@ export class Game {
     }
 
     this.tick(dt);
-    this.renderer.render(this.scene, this.camera);
+    this.postFX.render();
     requestAnimationFrame(this.loop);
   };
 
@@ -177,6 +182,9 @@ export class Game {
     this.environment.update(dt, performance.now() / 1000);
     this.environment.followSun(this.playerVehicle.position());
     this.chaseCamera.update(dt, this.playerVehicle);
+
+    const speedFactor = clamp(this.playerVehicle.linearVelocity().length() / 42, 0, 1);
+    this.postFX.setSpeedBlur(Math.pow(speedFactor, 2) * 0.45);
 
     const standings = [...this.raceManager.racers].sort((a, b) => a.rank - b.rank);
     this.hud.update({

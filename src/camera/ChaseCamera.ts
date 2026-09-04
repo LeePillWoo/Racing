@@ -87,7 +87,7 @@ export class ChaseCamera {
     this.camera.position.copy(renderPos);
     this.camera.lookAt(this.lookAt);
 
-    const targetFov = lerp(62, 78, speedFactor);
+    const targetFov = lerp(62, 84, Math.pow(speedFactor, 0.85));
     this.camera.fov = damp(this.camera.fov, targetFov, 3, dt);
     this.camera.updateProjectionMatrix();
   }

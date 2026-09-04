@@ -239,7 +239,7 @@ export class Vehicle {
 
     for (const bl of this.meshes.brakeLights) {
       const mat = bl.material as THREE.MeshStandardMaterial;
-      mat.emissiveIntensity = this.brakeLightsOn ? 2.2 : 0.15;
+      mat.emissiveIntensity = this.brakeLightsOn ? 9 : 0.15;
     }
   }
 
