@@ -31,6 +31,7 @@ export class HUD {
   private readonly standingsEl: HTMLElement;
   private readonly driftEl: HTMLElement;
   private readonly fpsEl: HTMLElement;
+  private standingsSignature = "";
   private finishOverlay: HTMLElement | null = null;
 
   constructor(container: HTMLElement, path: TrackPath) {
@@ -94,6 +95,9 @@ export class HUD {
 
     this.driftEl.classList.toggle("active", data.isDrifting);
 
+    const signature = data.standings.map(r => r.id + ":" + r.rank).join("|");
+    if (signature !== this.standingsSignature) {
+    this.standingsSignature = signature;
     this.standingsEl.innerHTML = data.standings
       .map(
         (r) =>
@@ -103,6 +107,7 @@ export class HUD {
           </div>`
       )
       .join("");
+    }
 
     this.minimap.render(data.standings);
   }
@@ -127,7 +132,7 @@ export class HUD {
               </div>`
           )
           .join("")}</div>
-        <button id="finish-restart" style="margin-top:20px;appearance:none;border:none;cursor:pointer;padding:12px 34px;font-size:1rem;font-weight:700;border-radius:999px;color:#10131a;background:linear-gradient(90deg,#ffd27a,#ff8a5c);">다시 시작</button>
+        <button id="finish-restart">다시 시작</button>
       </div>
     `;
     this.root.appendChild(overlay);

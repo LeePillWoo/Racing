@@ -25,14 +25,14 @@ export function createAsphaltTexture(): THREE.CanvasTexture {
   const { canvas, ctx } = makeCanvas(size);
   const rand = mulberry32(1337);
 
-  ctx.fillStyle = "#3a3d42";
+  ctx.fillStyle = "#484951";
   ctx.fillRect(0, 0, size, size);
 
   for (let i = 0; i < 9000; i++) {
     const x = rand() * size;
     const y = rand() * size;
     const g = 0.15 + rand() * 0.12;
-    ctx.fillStyle = `rgba(${g * 255 * 0.9},${g * 255 * 0.95},${g * 255},${0.25 + rand() * 0.3})`;
+    ctx.fillStyle = `rgba(${g * 255 * 0.9},${g * 255 * 0.95},${g * 255},${0.1 + rand() * 0.1})`;
     ctx.fillRect(x, y, 1 + rand() * 1.6, 1 + rand() * 1.6);
   }
 
@@ -230,4 +230,20 @@ export function createSoftDotTexture(): THREE.CanvasTexture {
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, size, size);
   return new THREE.CanvasTexture(canvas);
+}
+
+/** Deterministic, gently mottled grass for a bright parkland circuit. */
+export function createGrassTexture(): THREE.CanvasTexture {
+  const { canvas, ctx } = makeCanvas(256);
+  const rand = mulberry32(519);
+  ctx.fillStyle = "#80b82a"; ctx.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 7000; i++) {
+    ctx.fillStyle = rand() > 0.5 ? "rgba(55,99,16,0.1)" : "rgba(180,209,71,0.15)";
+    ctx.fillRect(rand() * 256, rand() * 256, 1 + rand() * 3, 1 + rand() * 5);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.anisotropy = 8;
+  return texture;
 }

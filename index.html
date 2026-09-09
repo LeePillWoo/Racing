@@ -2,33 +2,43 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Dune Coast GP</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#122339" />
+    <title>APEX — Formula Circuit</title>
   </head>
   <body>
     <div id="app">
-      <canvas id="viewport"></canvas>
+      <canvas id="viewport" tabindex="0" aria-label="포뮬러 레이싱 게임"></canvas>
       <div id="ui-root"></div>
+      <div class="race-brand"><span class="brand-mark">A/</span> APEX <span>FORMULA CIRCUIT</span></div>
       <div id="loading-screen">
         <div class="loading-card">
-          <h1>DUNE&nbsp;COAST&nbsp;GP</h1>
+          <div class="eyebrow">THE GRID IS WAITING</div>
+          <h1>APEX<span class="title-dot">.</span></h1>
+          <p class="edition">FORMULA CIRCUIT</p>
           <div class="loading-bar"><div class="loading-bar-fill" id="loading-bar-fill"></div></div>
-          <p id="loading-label">Loading assets&hellip;</p>
+          <p id="loading-label">서킷 준비 중</p>
         </div>
       </div>
       <div id="start-screen" class="hidden">
         <div class="start-card">
-          <h1>DUNE&nbsp;COAST&nbsp;GP</h1>
-          <p>사막과 해안을 잇는 순환 서킷 &middot; 3랩 레이스</p>
-          <ul class="controls-help">
-            <li><b>W / ↑</b> 가속</li>
-            <li><b>S / ↓</b> 브레이크 &amp; 후진</li>
-            <li><b>A D / ← →</b> 조향</li>
-            <li><b>Space</b> 핸드브레이크 (드리프트)</li>
-            <li><b>R</b> 차량 리셋</li>
-          </ul>
-          <button id="start-button">레이스 시작</button>
+          <div class="eyebrow"><span class="live-dot"></span> GRAND PRIX / ROUND 01</div>
+          <h1>CHASE<br>THE <span>APEX.</span></h1>
+          <p class="start-description">마지막 그리드에서 시작하는 당신의 그랑프리.<br>12대의 포뮬러, 3번의 랩. 선두를 향해 달리세요.</p>
+          <div class="race-specs"><div><b>12</b><span>DRIVERS</span></div><div><b>03</b><span>LAPS</span></div><div><b>DRY</b><span>CONDITIONS</span></div></div>
+          <button id="start-button">그리드 진입 <span>↗</span></button>
+          <div class="controls-help"><span><kbd>W A S D</kbd> / 방향키 · 주행</span><span><kbd>SPACE</kbd> 드리프트</span><span><kbd>R</kbd> 복귀 <kbd>C</kbd> 카메라 <kbd>ESC</kbd> 일시정지</span></div>
         </div>
+        <div class="start-footer"><span>PURE RACING. OPEN WHEELS.</span><span>APEX MOTORSPORT / 2026</span></div>
+      </div>
+      <div id="countdown" class="hidden" aria-live="polite"></div>
+      <div class="race-actions"><button id="reset-button" aria-label="차량을 트랙으로 복귀">R · 복귀</button><button id="pause-button" aria-label="일시정지">Ⅱ</button></div>
+      <div id="pause-screen" class="hidden">
+        <div class="finish-card"><div class="eyebrow">TAKE A BREATH</div><h2>일시정지</h2><p>준비되면 레이스를 이어가세요.</p><button id="resume-button">레이스 계속 ↗</button></div>
+      </div>
+      <div class="touch-controls" aria-label="터치 주행 조작">
+        <div><button data-control="KeyA" aria-label="왼쪽 조향">◀</button><button data-control="KeyD" aria-label="오른쪽 조향">▶</button></div>
+        <div><button data-control="Space" aria-label="핸드브레이크">DRIFT</button><button data-control="KeyS" aria-label="브레이크 및 후진">BRAKE</button><button data-control="KeyW" aria-label="가속">GO</button></div>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

@@ -1,377 +1,99 @@
-* {
-  box-sizing: border-box;
+:root{font-family:"Segoe UI","Malgun Gothic",sans-serif;color:#f5f8fc;background:#122339;font-synthesis:none;font-variant-numeric:tabular-nums}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden}
+body{user-select:none;-webkit-user-select:none}
+button{font:inherit;cursor:pointer}
+button:focus-visible,canvas:focus-visible{outline:3px solid #e5f34b;outline-offset:4px}
+#app{position:relative;width:100%;height:100dvh}
+#viewport,#ui-root{position:absolute;inset:0;width:100%;height:100%;display:block}
+#viewport{touch-action:none;outline:none}
+#ui-root{pointer-events:none}
+.hidden{display:none!important}
+.race-brand{position:absolute;top:27px;left:34px;display:flex;align-items:center;gap:9px;font-size:20px;font-weight:900;letter-spacing:2px;pointer-events:none;text-shadow:0 1px 8px #20344b55}
+.race-brand>span:last-child{font-size:9px;font-weight:600;letter-spacing:2px;margin-left:10px;opacity:.7}
+.brand-mark{background:#e5f34b;color:#14263d;padding:5px 8px;font-style:italic}
+#loading-screen,#start-screen,#pause-screen{position:absolute;inset:0;z-index:50;display:flex;align-items:center}
+#loading-screen{justify-content:center;background:#122339}
+.loading-card{text-align:center}
+.loading-card h1{font-size:100px;font-style:italic;letter-spacing:-9px;margin:10px 0 0}
+.title-dot{color:#e5f34b}
+.edition{letter-spacing:6px;font-size:12px;margin-bottom:45px}
+.eyebrow{font-size:10px;font-weight:700;letter-spacing:2.5px;display:flex;align-items:center;gap:10px}
+.loading-card .eyebrow{justify-content:center}
+.loading-bar{width:280px;height:3px;background:#ffffff20;margin:auto}
+.loading-bar-fill{height:100%;width:0;background:#e5f34b;transition:width .25s}
+#loading-label{font-size:12px;opacity:.6;margin-top:16px}
+#start-screen{background:linear-gradient(90deg,rgba(10,25,43,.93),rgba(10,25,43,.74) 30%,rgba(10,25,43,.12) 68%,transparent);padding:76px 7vw}
+.start-card{max-width:580px}
+.live-dot{width:6px;height:6px;border-radius:50%;background:#e5f34b;box-shadow:0 0 10px #e5f34670}
+.start-card h1{font-size:clamp(56px,7.1vw,108px);line-height:.91;letter-spacing:-5px;font-style:italic;font-weight:900;margin:34px 0 25px}
+.start-card h1>span{color:#e5f34b}
+.start-description{font-size:13px;line-height:1.95;color:#cfdae5}
+.race-specs{display:flex;gap:38px;margin:30px 0}
+.race-specs>div{display:flex;flex-direction:column;gap:4px}
+.race-specs b{font-size:25px;font-weight:800}
+.race-specs span{font-size:8px;letter-spacing:2px;color:#a0b5c8}
+#start-button,#resume-button,#finish-restart{border:0;border-radius:3px;padding:17px 24px;background:#e5f34b;color:#122339;font-size:14px;font-weight:800}
+#start-button{width:290px;display:flex;justify-content:space-between;align-items:center}
+#start-button:hover,#resume-button:hover,#finish-restart:hover{background:#f3ff78;transform:translateY(-1px)}
+#start-button>span{font-size:22px}
+.controls-help{display:flex;flex-direction:column;gap:9px;font-size:10px;color:#bac8d6;margin-top:22px}
+kbd{font:inherit;font-size:9px;border:1px solid #a8bbce50;padding:2px 5px;border-radius:2px;margin-right:3px}
+.start-footer{position:absolute;bottom:25px;left:7vw;right:35px;display:flex;justify-content:space-between;font-size:8px;letter-spacing:2px;color:#d7e2ed99}
+.hud-layer{position:absolute;inset:0;pointer-events:none;opacity:0}
+.racing .hud-layer{opacity:1}
+body:has(.finish-overlay) .hud-layer{opacity:1}
+.hud-panel{background:rgba(12,28,45,.78);border:1px solid #e4f2ff20;border-radius:3px;padding:12px 16px;backdrop-filter:blur(8px)}
+.hud-top-left{position:absolute;top:87px;left:34px}
+.hud-laptime{font-size:24px;font-weight:700}
+.label{font-size:9px;font-weight:600;letter-spacing:2px;color:#afc1d2;display:block;margin-bottom:5px}
+.hud-sublap{font-size:10px;font-weight:500;letter-spacing:1px;color:#b7c8d6;margin-top:7px}
+.hud-lapcount{position:absolute;top:27px;left:50%;transform:translateX(-50%);font-size:13px;font-weight:700;letter-spacing:2px;padding:12px 22px}
+.hud-position{position:absolute;top:182px;left:34px;font-size:36px;font-weight:900;color:#e5f34b;min-width:155px;border-left:3px solid #e5f34b}
+.hud-standings{position:absolute;top:87px;right:28px;min-width:160px;padding:12px}
+.standing-row{display:flex;gap:10px;align-items:center;padding:4px 4px;font-size:10px;letter-spacing:.8px;border-bottom:1px solid #ffffff09}
+.standing-rank{width:20px;opacity:.6}
+.standing-name{flex:1}
+.standing-row.is-player{color:#e5f34b;background:#e5f34b12;font-weight:800}
+.hud-bottom-right{position:absolute;bottom:24px;left:30px;right:30px;display:flex;align-items:flex-end;justify-content:space-between;pointer-events:none}
+.minimap-wrap{width:154px;height:154px;background:#0c1c2db0;border:1px solid #e4f2ff20;border-radius:3px;overflow:hidden}
+.minimap-wrap canvas{width:100%;height:100%;display:block}
+.speedo{position:relative;width:165px;height:165px;border-radius:50%;background:radial-gradient(circle,#102337db,#10233770 63%,transparent 65%);text-shadow:0 2px 6px #0006}
+.speedo canvas{width:100%;height:100%}
+.speedo-readout{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.speedo-value{font-size:43px;line-height:1;font-weight:800;font-style:italic}
+.speedo-unit{font-size:9px;letter-spacing:2px;opacity:.6;margin-top:5px}
+.speedo-gear{position:absolute;bottom:25px;font-size:12px;color:#e5f34b;font-weight:800}
+.drift-indicator{position:absolute;bottom:210px;right:58px;color:#e5f34b;font-size:12px;font-weight:900;letter-spacing:3px;opacity:0}
+.drift-indicator.active{opacity:1}
+.fps-counter{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);font-size:9px;color:#fff8}
+.race-actions{display:none;position:absolute;top:27px;right:28px;gap:8px}
+.racing .race-actions{display:flex}
+.race-actions button{background:#102337cc;color:#eaf3fc;border:1px solid #ffffff25;padding:10px 13px;border-radius:3px;font-size:11px}
+#countdown{position:absolute;top:34%;left:50%;transform:translate(-50%,-50%);font-size:100px;font-style:italic;font-weight:900;color:#e5f34b;text-shadow:0 4px 24px #12233960;pointer-events:none}
+#pause-screen,.finish-overlay{background:#0b1b2db0;backdrop-filter:blur(7px);justify-content:center;z-index:80}
+.finish-overlay{position:absolute;inset:0;display:flex;align-items:center;pointer-events:auto}
+.finish-card{background:#122339f5;border:1px solid #ffffff20;padding:38px 44px;border-radius:5px;min-width:320px;text-align:center;max-height:90dvh;overflow:auto}
+.finish-card h2{font-size:30px;margin:16px 0;color:#e5f34b}
+.finish-card p{font-size:12px;color:#b7c8d6}
+.finish-card .eyebrow{justify-content:center}
+#finish-restart{margin-top:22px}
+.touch-controls{display:none;position:absolute;bottom:16px;left:16px;right:16px;justify-content:space-between;pointer-events:none}
+.touch-controls>div{display:flex;gap:8px}
+.touch-controls button{pointer-events:auto;touch-action:none;background:#132941bb;border:1px solid #ffffff40;border-radius:6px;color:white;min-width:54px;height:54px;font-weight:800;font-size:11px}
+.touch-controls button[data-control="KeyW"]{background:#e5f34b;color:#122339}
+@media(max-width:700px){
+.race-brand{top:18px;left:18px;font-size:15px}.race-brand>span:last-child{display:none}
+#start-screen{padding:70px 7vw;background:linear-gradient(90deg,#0a192beb,#0a192b65)}
+.start-card h1{font-size:70px}.start-description{font-size:12px}.race-specs{margin:24px 0}
+.start-footer{font-size:7px}.start-footer>span:last-child{display:none}
+.hud-top-left{top:70px;left:14px}.hud-panel{padding:9px 11px}.hud-laptime{font-size:18px}.hud-sublap{font-size:8px}
+.hud-position{top:148px;left:14px;min-width:120px;font-size:29px}
+.hud-lapcount{top:20px;padding:9px 11px;font-size:10px;letter-spacing:1px}
+.hud-standings{right:14px;top:70px;min-width:113px}.standing-row{font-size:8px;padding:3px}
+.hud-bottom-right{left:14px;right:14px;bottom:22px}.minimap-wrap{width:110px;height:110px}.speedo{width:135px;height:135px}
+.speedo-value{font-size:34px}.speedo-gear{bottom:19px}.race-actions{top:18px;right:14px}
+.race-actions button{padding:8px}.race-actions #reset-button{display:none}
 }
-
-html, body {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  background: #05070a;
-  font-family: "Segoe UI", "Pretendard", -apple-system, BlinkMacSystemFont, sans-serif;
-  color: #eef2f6;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-#app {
-  position: relative;
-  width: 100vw;
-  height: 100vh;
-}
-
-#viewport {
-  position: absolute;
-  inset: 0;
-  display: block;
-  width: 100%;
-  height: 100%;
-  touch-action: none;
-}
-
-#ui-root {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.hidden {
-  display: none !important;
-}
-
-/* ---------- loading / start screens ---------- */
-
-#loading-screen,
-#start-screen {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: radial-gradient(ellipse at center, #1b2230 0%, #05070a 75%);
-  z-index: 50;
-}
-
-.loading-card,
-.start-card {
-  text-align: center;
-  padding: 40px 56px;
-  border-radius: 18px;
-  background: rgba(10, 14, 20, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(6px);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-}
-
-.loading-card h1,
-.start-card h1 {
-  margin: 0 0 18px;
-  font-size: 2.4rem;
-  letter-spacing: 0.12em;
-  font-weight: 800;
-  background: linear-gradient(90deg, #ffd27a, #ff8a5c 45%, #4fc3ff);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
-.loading-bar {
-  width: 320px;
-  height: 8px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.12);
-  overflow: hidden;
-  margin: 0 auto 14px;
-}
-
-.loading-bar-fill {
-  height: 100%;
-  width: 0%;
-  background: linear-gradient(90deg, #ffb15c, #ff5c8a);
-  transition: width 0.25s ease;
-}
-
-#loading-label {
-  margin: 0;
-  opacity: 0.75;
-  font-size: 0.9rem;
-  letter-spacing: 0.04em;
-}
-
-.start-card p {
-  margin: 0 0 20px;
-  opacity: 0.8;
-}
-
-.controls-help {
-  list-style: none;
-  margin: 0 0 26px;
-  padding: 14px 18px;
-  text-align: left;
-  display: inline-block;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 10px;
-  font-size: 0.92rem;
-  line-height: 1.9;
-}
-
-.controls-help b {
-  display: inline-block;
-  min-width: 88px;
-  color: #ffd27a;
-}
-
-#start-button {
-  appearance: none;
-  border: none;
-  cursor: pointer;
-  padding: 14px 42px;
-  font-size: 1.05rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  border-radius: 999px;
-  color: #10131a;
-  background: linear-gradient(90deg, #ffd27a, #ff8a5c);
-  box-shadow: 0 8px 24px rgba(255, 138, 92, 0.35);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-
-#start-button:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 30px rgba(255, 138, 92, 0.45);
-}
-
-#start-button:active {
-  transform: translateY(0);
-}
-
-/* ---------- HUD ---------- */
-
-.hud-layer {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  font-variant-numeric: tabular-nums;
-}
-
-.hud-top-left {
-  position: absolute;
-  top: 18px;
-  left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.hud-panel {
-  background: rgba(8, 10, 16, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  padding: 10px 16px;
-  backdrop-filter: blur(4px);
-}
-
-.hud-laptime {
-  font-size: 1.4rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-}
-
-.hud-laptime .label,
-.hud-position .label {
-  font-size: 0.68rem;
-  opacity: 0.6;
-  letter-spacing: 0.1em;
-  display: block;
-  margin-bottom: 2px;
-}
-
-.hud-sublap {
-  font-size: 0.82rem;
-  opacity: 0.7;
-  margin-top: 2px;
-}
-
-.hud-position {
-  font-size: 1.6rem;
-  font-weight: 800;
-  color: #ffd27a;
-}
-
-.hud-lapcount {
-  position: absolute;
-  top: 18px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 1.1rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  padding: 8px 22px;
-}
-
-.hud-bottom-right {
-  position: absolute;
-  bottom: 18px;
-  right: 18px;
-  display: flex;
-  align-items: flex-end;
-  gap: 16px;
-}
-
-.speedo {
-  position: relative;
-  width: 168px;
-  height: 168px;
-}
-
-.speedo canvas {
-  width: 100%;
-  height: 100%;
-}
-
-.speedo-readout {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-}
-
-.speedo-value {
-  font-size: 2.1rem;
-  font-weight: 800;
-  line-height: 1;
-}
-
-.speedo-unit {
-  font-size: 0.65rem;
-  opacity: 0.6;
-  letter-spacing: 0.15em;
-  margin-top: 2px;
-}
-
-.speedo-gear {
-  position: absolute;
-  bottom: 30px;
-  font-size: 0.9rem;
-  font-weight: 700;
-  color: #ffd27a;
-  opacity: 0.9;
-}
-
-.minimap-wrap {
-  width: 176px;
-  height: 176px;
-  border-radius: 12px;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(8, 10, 16, 0.55);
-  backdrop-filter: blur(4px);
-}
-
-.minimap-wrap canvas {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
-.hud-standings {
-  position: absolute;
-  top: 18px;
-  right: 18px;
-  min-width: 190px;
-  padding: 10px 14px;
-}
-
-.hud-standings .label {
-  font-size: 0.68rem;
-  opacity: 0.6;
-  letter-spacing: 0.1em;
-  display: block;
-  margin-bottom: 6px;
-}
-
-.standing-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 0;
-  font-size: 0.86rem;
-  opacity: 0.85;
-}
-
-.standing-row.is-player {
-  color: #ffd27a;
-  font-weight: 700;
-  opacity: 1;
-}
-
-.standing-rank {
-  width: 18px;
-  opacity: 0.6;
-}
-
-.standing-name {
-  flex: 1;
-}
-
-.drift-indicator {
-  position: absolute;
-  bottom: 18px;
-  left: 18px;
-  padding: 8px 18px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  color: #ff5c8a;
-  opacity: 0;
-  transform: translateY(6px);
-  transition: opacity 0.15s ease, transform 0.15s ease;
-}
-
-.drift-indicator.active {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.finish-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(5, 7, 10, 0.6);
-  backdrop-filter: blur(4px);
-  pointer-events: auto;
-}
-
-.finish-card {
-  text-align: center;
-  padding: 36px 52px;
-  border-radius: 18px;
-  background: rgba(10, 14, 20, 0.75);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.finish-card h2 {
-  margin: 0 0 8px;
-  font-size: 1.8rem;
-  color: #ffd27a;
-}
-
-.finish-card p {
-  opacity: 0.75;
-  margin: 0 0 22px;
-}
-
-.fps-counter {
-  position: absolute;
-  bottom: 18px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 0.72rem;
-  opacity: 0.4;
-  letter-spacing: 0.06em;
-}
+@media(pointer:coarse){.racing .touch-controls{display:flex}.hud-bottom-right{bottom:90px}.drift-indicator{bottom:245px}}
+@media(max-height:600px){.start-card h1{font-size:54px;margin:18px 0}.race-specs{margin:16px 0}.controls-help{gap:5px;margin-top:12px}.start-description{margin:8px 0}.start-footer{display:none}.hud-standings .standing-row:nth-child(n+7){display:none}}

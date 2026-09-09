@@ -46,19 +46,19 @@ export interface VehicleConfig {
 }
 
 export const DEFAULT_VEHICLE_CONFIG: VehicleConfig = {
-  chassisHalfExtents: { x: 0.95, y: 0.38, z: 2.05 },
-  chassisMass: 1180,
-  chassisCenterOfMassOffsetY: -0.24,
-  spawnHeight: 1.5,
+  chassisHalfExtents: { x: 0.84, y: 0.22, z: 2.2 },
+  chassisMass: 780,
+  chassisCenterOfMassOffsetY: -0.08,
+  spawnHeight: 1.15,
 
-  wheelRadius: 0.34,
-  wheelWidth: 0.3,
-  trackHalfWidth: 0.98,
+  wheelRadius: 0.46,
+  wheelWidth: 0.43,
+  trackHalfWidth: 1.14,
   wheelBaseFront: 1.55,
   wheelBaseRear: -1.45,
-  connectionPointY: -0.64,
+  connectionPointY: -0.32,
 
-  suspensionRestLength: 0.32,
+  suspensionRestLength: 0.24,
   maxSuspensionTravel: 0.16,
   suspensionStiffness: 28,
   suspensionCompression: 0.6,
@@ -69,7 +69,7 @@ export const DEFAULT_VEHICLE_CONFIG: VehicleConfig = {
   baseSideFrictionStiffness: 2.2,
   handbrakeRearFrictionMultiplier: 0.42,
 
-  maxEngineForceRear: 5400,
+  maxEngineForceRear: 4200,
   maxEngineForceFront: 0,
   reverseForceFraction: 0.55,
   topSpeedMs: 55, // ~198 km/h
@@ -82,7 +82,7 @@ export const DEFAULT_VEHICLE_CONFIG: VehicleConfig = {
   steerHighSpeedThreshold: 34,
   steerResponse: 7,
 
-  driftAssistTorque: 1100,
+  driftAssistTorque: 550,
   driftAssistMinSpeed: 6,
 };
 

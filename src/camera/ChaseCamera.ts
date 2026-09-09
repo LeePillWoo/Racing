@@ -22,8 +22,8 @@ export class ChaseCamera {
     const pos = vehicle.position();
     const forward = vehicle.forwardVector();
     this.followDir.copy(forward);
-    this.position.copy(pos).addScaledVector(forward, -7).add(new THREE.Vector3(0, 2.4, 0));
-    this.lookAt.copy(pos).addScaledVector(forward, 4).add(new THREE.Vector3(0, 1.1, 0));
+    this.position.copy(pos).addScaledVector(forward, -8.4).add(new THREE.Vector3(0, 3.1, 0));
+    this.lookAt.copy(pos).addScaledVector(forward, 9).add(new THREE.Vector3(0, 0.35, 0));
     this.camera.position.copy(this.position);
     this.camera.lookAt(this.lookAt);
     this.initialized = true;
@@ -58,8 +58,8 @@ export class ChaseCamera {
     this.followDir.lerp(desiredDir, 1 - Math.exp(-6.5 * dt)).normalize();
 
     const farMul = this.farView ? 1.6 : 1;
-    const distance = lerp(6.2, 8.4, speedFactor) * farMul;
-    const height = lerp(2.25, 2.85, speedFactor) * farMul;
+    const distance = lerp(8.4, 9.1, speedFactor) * farMul;
+    const height = lerp(3.1, 3.3, speedFactor) * farMul;
     const desiredPos = pos
       .clone()
       .addScaledVector(this.followDir, -distance)
@@ -69,7 +69,7 @@ export class ChaseCamera {
     this.position.y = damp(this.position.y, desiredPos.y, 8, dt);
     this.position.z = damp(this.position.z, desiredPos.z, 10, dt);
 
-    const desiredLookAt = pos.clone().addScaledVector(forward, 5).add(new THREE.Vector3(0, 1.15, 0));
+    const desiredLookAt = pos.clone().addScaledVector(forward, 9).add(new THREE.Vector3(0, 0.35, 0));
     this.lookAt.x = damp(this.lookAt.x, desiredLookAt.x, 12, dt);
     this.lookAt.y = damp(this.lookAt.y, desiredLookAt.y, 12, dt);
     this.lookAt.z = damp(this.lookAt.z, desiredLookAt.z, 12, dt);
@@ -87,7 +87,7 @@ export class ChaseCamera {
     this.camera.position.copy(renderPos);
     this.camera.lookAt(this.lookAt);
 
-    const targetFov = lerp(62, 84, Math.pow(speedFactor, 0.85));
+    const targetFov = lerp(56, 64, Math.pow(speedFactor, 0.85));
     this.camera.fov = damp(this.camera.fov, targetFov, 3, dt);
     this.camera.updateProjectionMatrix();
   }

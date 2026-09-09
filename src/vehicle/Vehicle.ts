@@ -116,6 +116,9 @@ export class Vehicle {
   /** One fixed physics substep: apply driver input, update tire grip curve, then step the vehicle controller. */
   physicsStep(dt: number, input: InputState): void {
     const config = this.config;
+    // Rapier retains user forces/torques until explicitly cleared.
+    this.body.resetForces(false);
+    this.body.resetTorques(false);
     const linvel = this.body.linvel();
     const angvel = this.body.angvel();
     const rot = this.body.rotation();
@@ -140,20 +143,21 @@ export class Vehicle {
     // --- throttle / brake / reverse ---
     let engineForce = 0;
     let brakeAll = 0;
-    const nearStopped = Math.abs(forwardSpeed) < 0.6;
-
-    if (input.brake > 0 && (forwardSpeed > 0.5 || (nearStopped && input.throttle === 0))) {
-      if (forwardSpeed > 0.5) {
+    if (input.brake > 0) {
+      if (forwardSpeed > 0.5 || input.throttle > 0) {
         brakeAll = config.maxBrakeForce * input.brake;
       } else {
-        engineForce = -config.maxEngineForceRear * config.reverseForceFraction * input.brake;
+        const reversePower = clamp(1 - Math.abs(forwardSpeed) / 10, 0, 1);
+        engineForce = -config.maxEngineForceRear * config.reverseForceFraction * input.brake * reversePower;
       }
-    }
-    if (input.throttle > 0) {
-      const powerFactor = Math.max(0.1, 1 - clamp(forwardSpeed / config.topSpeedMs, 0, 1));
-      engineForce = config.maxEngineForceRear * input.throttle * powerFactor;
-    }
-    if (input.throttle === 0 && input.brake === 0) {
+    } else if (input.throttle > 0) {
+      if (forwardSpeed < -0.5) {
+        brakeAll = config.maxBrakeForce * input.throttle;
+      } else {
+        const powerFactor = Math.max(0, 1 - clamp(forwardSpeed / config.topSpeedMs, 0, 1));
+        engineForce = config.maxEngineForceRear * input.throttle * powerFactor;
+      }
+    } else {
       brakeAll = config.rollingResistance;
     }
 
@@ -273,6 +277,15 @@ export class Vehicle {
     this.body.setRotation({ x: 0, y: Math.sin(yawRad / 2), z: 0, w: Math.cos(yawRad / 2) }, true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.body.resetForces(true);
+    this.body.resetTorques(true);
     this.currentSteerAngle = 0;
+    this.brakeLightsOn = false;
+    for (let i = 0; i < 4; i++) {
+      this.controller.setWheelSteering(i, 0);
+      this.controller.setWheelEngineForce(i, 0);
+      this.controller.setWheelBrake(i, 0);
+    }
+    this.lastTelemetry = { speedKmh: 0, forwardSpeedMs: 0, isDrifting: false, maxSlipDeg: 0, gear: "N" };
   }
 }

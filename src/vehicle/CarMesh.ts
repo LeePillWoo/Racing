@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
-import { VehicleConfig } from "./VehicleConfig";
-import { createTireTreadTexture } from "../utils/Textures";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import type { VehicleConfig } from "./VehicleConfig";
 
 export interface CarMeshSet {
   root: THREE.Group;
@@ -10,144 +10,158 @@ export interface CarMeshSet {
   bodyMaterial: THREE.MeshStandardMaterial;
 }
 
-const treadTexture = createTireTreadTexture();
+function box(parent: THREE.Object3D, material: THREE.Material, size: number[], position: number[], rounded = false): THREE.Mesh {
+  const geometry = rounded
+    ? new RoundedBoxGeometry(size[0], size[1], size[2], 2, Math.min(...size) * 0.18)
+    : new THREE.BoxGeometry(size[0], size[1], size[2]);
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.set(position[0], position[1], position[2]);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  parent.add(mesh);
+  return mesh;
+}
 
-function buildWheel(config: VehicleConfig): THREE.Group {
-  const group = new THREE.Group();
+function rod(parent: THREE.Object3D, a: THREE.Vector3, b: THREE.Vector3, radius: number, material: THREE.Material): void {
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, a.distanceTo(b), 8), material);
+  mesh.position.copy(a).add(b).multiplyScalar(0.5);
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+  mesh.castShadow = true;
+  parent.add(mesh);
+}
 
-  const tireGeo = new THREE.CylinderGeometry(config.wheelRadius, config.wheelRadius, config.wheelWidth, 24, 1, false);
-  tireGeo.rotateZ(Math.PI / 2);
-  const tireMat = new THREE.MeshStandardMaterial({
-    color: "#161616",
-    roughness: 0.95,
-    metalness: 0,
-    map: treadTexture,
-  });
-  const tire = new THREE.Mesh(tireGeo, tireMat);
+
+/** Batch rigid parts by material while retaining independent wheel and brake-light transforms. */
+function batchParts(parent: THREE.Group, excluded?: THREE.Object3D): void {
+  const batches = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  for (const child of [...parent.children]) {
+    if (!(child instanceof THREE.Mesh) || child === excluded || Array.isArray(child.material)) continue;
+    child.updateMatrix();
+    const geometry = (child.geometry.index ? child.geometry.toNonIndexed() : child.geometry.clone()).applyMatrix4(child.matrix);
+    const list = batches.get(child.material) ?? [];
+    list.push(geometry); batches.set(child.material, list);
+    parent.remove(child);
+    child.geometry.dispose();
+  }
+  for (const [material, parts] of batches) {
+    const geometry = mergeGeometries(parts);
+    if (!geometry) throw new Error("Unable to batch car geometry");
+    parts.forEach(part => part.dispose());
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.castShadow = true; mesh.receiveShadow = true; parent.add(mesh);
+  }
+}
+
+function buildWheel(config: VehicleConfig, rear: boolean): THREE.Group {
+  const root = new THREE.Group();
+  const width = config.wheelWidth * (rear ? 1.18 : 1);
+  const rubber = new THREE.MeshStandardMaterial({ color: "#202125", roughness: 0.86 });
+  const tire = new THREE.Mesh(new THREE.CylinderGeometry(config.wheelRadius, config.wheelRadius, width, 32), rubber);
+  tire.rotation.z = Math.PI / 2;
   tire.castShadow = true;
-  tire.receiveShadow = true;
-  group.add(tire);
-
-  // Sidewall ring (slightly recessed disc on each face) for a bit of tire-profile depth.
-  const sidewallMat = new THREE.MeshStandardMaterial({ color: "#101010", roughness: 0.9, metalness: 0 });
-  const sidewallGeo = new THREE.RingGeometry(config.wheelRadius * 0.62, config.wheelRadius * 0.97, 24);
-  for (const sx of [-1, 1]) {
-    const sw = new THREE.Mesh(sidewallGeo, sidewallMat);
-    sw.rotation.y = sx > 0 ? Math.PI / 2 : -Math.PI / 2;
-    sw.position.x = sx * (config.wheelWidth / 2 + 0.001);
-    group.add(sw);
+  root.add(tire);
+  const rimMat = new THREE.MeshStandardMaterial({ color: "#42464e", metalness: 0.65, roughness: 0.35 });
+  const ringMat = new THREE.MeshStandardMaterial({ color: "#f0d349", roughness: 0.7 });
+  for (const side of [-1, 1]) {
+    const rim = new THREE.Mesh(new THREE.CylinderGeometry(config.wheelRadius * 0.54, config.wheelRadius * 0.54, 0.02, 16), rimMat);
+    rim.rotation.z = Math.PI / 2;
+    rim.position.x = side * (width / 2 + 0.012);
+    root.add(rim);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(config.wheelRadius * 0.81, 0.014, 5, 32), ringMat);
+    ring.rotation.y = Math.PI / 2;
+    ring.position.x = side * (width / 2 + 0.018);
+    root.add(ring);
+    for (let i = 0; i < 6; i++) {
+      const spoke = box(root, rimMat, [0.025, 0.036, config.wheelRadius * 0.8], [side * (width / 2 + 0.025), 0, 0]);
+      spoke.rotation.x = i * Math.PI / 3;
+    }
   }
-
-  const rimGeo = new THREE.CylinderGeometry(config.wheelRadius * 0.58, config.wheelRadius * 0.58, config.wheelWidth * 1.03, 6);
-  rimGeo.rotateZ(Math.PI / 2);
-  const rimMat = new THREE.MeshStandardMaterial({ color: "#d8dbe0", roughness: 0.28, metalness: 0.92 });
-  const rim = new THREE.Mesh(rimGeo, rimMat);
-  group.add(rim);
-
-  // A few spokes for a forged-wheel silhouette instead of a flat disc.
-  const spokeGeo = new THREE.BoxGeometry(config.wheelWidth * 0.9, config.wheelRadius * 0.12, config.wheelRadius * 0.5);
-  const spokeCount = 5;
-  for (let i = 0; i < spokeCount; i++) {
-    const spoke = new THREE.Mesh(spokeGeo, rimMat);
-    const angle = (i / spokeCount) * Math.PI * 2;
-    spoke.position.set(0, Math.sin(angle) * config.wheelRadius * 0.3, Math.cos(angle) * config.wheelRadius * 0.3);
-    spoke.rotation.x = angle;
-    group.add(spoke);
-  }
-
-  const hubMat = new THREE.MeshStandardMaterial({ color: "#3a3d42", roughness: 0.4, metalness: 0.8 });
-  const hubGeo = new THREE.CylinderGeometry(config.wheelRadius * 0.16, config.wheelRadius * 0.16, config.wheelWidth * 1.06, 12);
-  hubGeo.rotateZ(Math.PI / 2);
-  group.add(new THREE.Mesh(hubGeo, hubMat));
-
-  return group;
+  batchParts(root);
+  return root;
 }
 
-function buildWheelArch(config: VehicleConfig, material: THREE.Material, sideSign: number, z: number): THREE.Mesh {
-  const archRadius = config.wheelRadius * 1.22;
-  // Half-ring (arc = PI) swept from local +X, through +Y, to -X in the geometry's default XY
-  // plane; rotating the mesh 90° about Y then re-projects that sweep into the Y-Z plane, i.e. a
-  // silhouette that arcs up and over the wheel when viewed from the side — exactly a fender flare.
-  const geo = new THREE.TorusGeometry(archRadius, config.wheelRadius * 0.16, 8, 16, Math.PI);
-  const arch = new THREE.Mesh(geo, material);
-  arch.rotation.y = Math.PI / 2;
-  const archY = config.connectionPointY - config.suspensionRestLength * 0.55;
-  arch.position.set(sideSign * config.trackHalfWidth, archY, z);
-  arch.castShadow = true;
-  arch.receiveShadow = true;
-  return arch;
-}
-
-/** Builds a rounded, high-metalness arcade sports-car body with fender flares, plus four wheels. */
+/** Z-forward open-wheel racer; suspension and tire locations match the physics chassis. */
 export function buildCarMesh(config: VehicleConfig, color: THREE.ColorRepresentation): CarMeshSet {
   const root = new THREE.Group();
-  const bodyMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.28, metalness: 0.88 });
-  const bodyLength = config.chassisHalfExtents.z * 1.85;
-  const bodyWidth = config.chassisHalfExtents.x * 2;
+  root.name = "formula-car";
+  const bodyMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.34, metalness: 0.24 });
+  const accent = new THREE.MeshStandardMaterial({ color: new THREE.Color(color).getHex() === 0x145acb ? "#ffdb19" : "#f4f7f9", roughness: 0.38, metalness: 0.12 });
+  const carbon = new THREE.MeshStandardMaterial({ color: "#171c25", roughness: 0.68, metalness: 0.15 });
+  const suspension = new THREE.MeshStandardMaterial({ color: "#527a99", roughness: 0.4, metalness: 0.6 });
 
-  const lowerBody = new THREE.Mesh(new RoundedBoxGeometry(bodyWidth, config.chassisHalfExtents.y * 1.3, bodyLength, 3, 0.1), bodyMaterial);
-  lowerBody.position.set(0, -0.02, 0.05);
-  lowerBody.castShadow = true;
-  lowerBody.receiveShadow = true;
-  root.add(lowerBody);
+  box(root, carbon, [1.7, 0.075, 3.9], [0, -0.36, -0.12]);
+  box(root, bodyMaterial, [0.69, 0.49, 2.7], [0, -0.03, -0.12], true);
+  for (const side of [-1, 1]) {
+    box(root, bodyMaterial, [0.51, 0.38, 1.75], [side * 0.59, -0.1, -0.55], true);
+    box(root, carbon, [0.38, 0.2, 0.025], [side * 0.6, -0.03, 0.34]);
+    box(root, accent, [0.065, 0.028, 1.58], [side * 0.67, 0.102, -0.61]);
+  }
 
-  const cabinMat = new THREE.MeshStandardMaterial({ color: "#12161c", roughness: 0.12, metalness: 0.4 });
-  const cabin = new THREE.Mesh(new RoundedBoxGeometry(1.05, 0.42, 1.7, 2, 0.08), cabinMat);
-  cabin.position.set(0, 0.42, -0.05);
-  cabin.castShadow = true;
-  root.add(cabin);
-
-  const nose = new THREE.Mesh(new RoundedBoxGeometry(1.5, 0.5, 0.65, 2, 0.1), bodyMaterial);
-  nose.position.set(0, -0.02, bodyLength * 0.5 + 0.28);
+  // Tapered nose, rising towards the cockpit.
+  const noseGeo = new THREE.CylinderGeometry(0.17, 0.34, 1.9, 4, 1);
+  noseGeo.rotateY(Math.PI / 4);
+  noseGeo.rotateX(Math.PI / 2);
+  const nose = new THREE.Mesh(noseGeo, accent);
+  nose.scale.y = 0.62;
+  nose.position.set(0, -0.04, 1.2);
   nose.castShadow = true;
   root.add(nose);
+  box(root, accent, [0.48, 0.025, 1.5], [0, 0.228, -0.77], true);
 
-  // Front splitter / rear diffuser lips — small dark accents that break up the body color.
-  const trimMat = new THREE.MeshStandardMaterial({ color: "#111214", roughness: 0.5, metalness: 0.3 });
-  const splitter = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.06, 0.18), trimMat);
-  splitter.position.set(0, -0.32, bodyLength * 0.5 + 0.5);
-  root.add(splitter);
-  const diffuser = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.08, 0.16), trimMat);
-  diffuser.position.set(0, -0.3, -bodyLength * 0.5 - 0.04);
-  root.add(diffuser);
+  // Open cockpit, helmet, visor and protective halo.
+  box(root, carbon, [0.48, 0.1, 0.67], [0, 0.245, 0.06], true);
+  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.18, 20, 12), accent);
+  helmet.position.set(0, 0.39, 0.06);
+  helmet.castShadow = true;
+  root.add(helmet);
+  const visor = new THREE.Mesh(new THREE.SphereGeometry(0.184, 16, 8, 0, Math.PI * 2, Math.PI * 0.36, Math.PI * 0.23), carbon);
+  visor.position.copy(helmet.position);
+  root.add(visor);
+  const haloCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-0.25, 0.39, -0.29), new THREE.Vector3(-0.29, 0.51, 0.06),
+    new THREE.Vector3(0, 0.52, 0.48), new THREE.Vector3(0.29, 0.51, 0.06),
+    new THREE.Vector3(0.25, 0.39, -0.29),
+  ]);
+  const halo = new THREE.Mesh(new THREE.TubeGeometry(haloCurve, 20, 0.035, 6, false), suspension);
+  root.add(halo);
+  rod(root, new THREE.Vector3(0, 0.22, 0.58), new THREE.Vector3(0, 0.52, 0.48), 0.03, suspension);
+  box(root, bodyMaterial, [0.28, 0.58, 0.35], [0, 0.39, -0.61], true);
+  box(root, carbon, [0.17, 0.2, 0.028], [0, 0.53, -0.42]);
 
-  const spoiler = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.08, 0.32), bodyMaterial);
-  spoiler.position.set(0, 0.52, -bodyLength * 0.5 - 0.05);
-  const spoilerStand = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.22, 0.08), bodyMaterial);
-  spoilerStand.position.set(0, 0.4, -bodyLength * 0.5 - 0.02);
-  root.add(spoiler, spoilerStand);
-  spoiler.castShadow = true;
+  // Wide, stacked aero wings and upright endplates.
+  box(root, bodyMaterial, [2.48, 0.09, 0.5], [0, -0.29, 2.14]);
+  box(root, accent, [2.22, 0.065, 0.18], [0, -0.18, 2.0]);
+  for (const side of [-1, 1]) {
+    box(root, bodyMaterial, [0.065, 0.26, 0.62], [side * 1.2, -0.18, 2.12]);
+    box(root, suspension, [0.07, 0.86, 0.15], [side * 0.52, 0.06, -1.9]);
+    box(root, bodyMaterial, [0.07, 0.5, 0.67], [side * 1.01, 0.5, -1.92]);
+  }
+  box(root, bodyMaterial, [2.06, 0.11, 0.57], [0, 0.68, -1.92]);
+  box(root, accent, [1.94, 0.05, 0.13], [0, 0.51, -1.75]);
+  for (let i = -2; i <= 2; i++) box(root, carbon, [0.055, 0.24, 0.57], [i * 0.24, -0.34, -1.96]);
 
-  const headlightMat = new THREE.MeshStandardMaterial({ color: "#fff4d1", emissive: "#fff2c0", emissiveIntensity: 5 });
-  const headlightGeo = new THREE.BoxGeometry(0.22, 0.1, 0.06);
-  for (const sx of [-1, 1]) {
-    const hl = new THREE.Mesh(headlightGeo, headlightMat);
-    hl.position.set(sx * 0.55, 0.05, bodyLength * 0.5 + 0.58);
-    root.add(hl);
+  const wheelY = config.connectionPointY - config.suspensionRestLength;
+  for (const side of [-1, 1]) {
+    for (const z of [config.wheelBaseFront, config.wheelBaseRear]) {
+      for (const anchorZ of [-0.35, 0.35]) {
+        rod(root, new THREE.Vector3(side * 0.34, -0.15, z + anchorZ), new THREE.Vector3(side * config.trackHalfWidth, wheelY + 0.05, z), 0.025, suspension);
+      }
+      rod(root, new THREE.Vector3(side * 0.3, 0.09, z - 0.2), new THREE.Vector3(side * config.trackHalfWidth, wheelY + 0.07, z), 0.023, suspension);
+    }
+    box(root, bodyMaterial, [0.17, 0.1, 0.22], [side * 0.54, 0.29, 0.4], true);
   }
 
-  const brakeLightMat = new THREE.MeshStandardMaterial({ color: "#3a0000", emissive: "#ff1414", emissiveIntensity: 0.15 });
-  const brakeLightGeo = new THREE.BoxGeometry(0.24, 0.14, 0.06);
-  const brakeLights: THREE.Mesh[] = [];
-  for (const sx of [-1, 1]) {
-    const bl = new THREE.Mesh(brakeLightGeo, brakeLightMat.clone());
-    bl.position.set(sx * 0.58, 0.15, -bodyLength * 0.5 - 0.05);
-    root.add(bl);
-    brakeLights.push(bl);
-  }
+  const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.14, 0.04),
+    new THREE.MeshStandardMaterial({ color: "#e52e3a", emissive: "#ff1010", emissiveIntensity: 0.15 }));
+  lamp.position.set(0, -0.11, -2.26);
+  root.add(lamp);
 
-  // Wheel arches: sculpted fender flares over all four wheels, body-colored to match the shell.
-  for (const sideSign of [-1, 1]) {
-    root.add(buildWheelArch(config, bodyMaterial, sideSign, config.wheelBaseFront));
-    root.add(buildWheelArch(config, bodyMaterial, sideSign, config.wheelBaseRear));
-  }
-
-  const wheels: THREE.Group[] = [];
-  for (let i = 0; i < 4; i++) {
-    const w = buildWheel(config);
-    root.add(w);
-    wheels.push(w);
-  }
-
-  return { root, wheels, brakeLights, bodyMaterial };
+  const wheels = Array.from({ length: 4 }, (_, i) => {
+    const wheel = buildWheel(config, i >= 2);
+    wheel.position.set((i % 2 === 0 ? -1 : 1) * config.trackHalfWidth, wheelY, i < 2 ? config.wheelBaseFront : config.wheelBaseRear);
+    root.add(wheel);
+    return wheel;
+  });
+  batchParts(root, lamp);
+  return { root, wheels, brakeLights: [lamp], bodyMaterial };
 }

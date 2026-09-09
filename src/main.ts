@@ -11,6 +11,7 @@ async function bootstrap(): Promise<void> {
   const startButton = document.getElementById("start-button")!;
 
   const game = new Game(canvas, uiRoot);
+  if (import.meta.env.DEV) Object.assign(window, { __racing: game });
 
   await game.load((fraction, label) => {
     loadingBarFill.style.width = `${Math.round(fraction * 100)}%`;

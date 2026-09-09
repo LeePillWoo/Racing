@@ -26,7 +26,7 @@ export class AIController {
   sample(dt: number): InputState {
     const vehicle = this.racer.vehicle;
     const pos = vehicle.position();
-    const { u, index } = this.path.projectPoint(pos, this.hint);
+    const { u, index, distance } = this.path.projectPoint(pos, this.hint);
     this.hint = index;
 
     const speedMs = Math.max(0, vehicle.telemetry.forwardSpeedMs);
@@ -64,13 +64,14 @@ export class AIController {
       brake = clamp((speedMs - targetSpeed) / 8, 0.15, 1);
     }
 
-    const handbrake = curvature > 0.7 && Math.abs(steer) > 0.55 && speedMs > 9;
+    const handbrake = false; // Formula AI takes corners with grip instead of deliberately sliding.
 
-    if (speedMs < 0.8 && throttle > 0) {
+    if ((speedMs < 0.8 && throttle > 0) || distance > 11.5) {
       this.stuckTimer += dt;
       if (this.stuckTimer > 2.5) {
         this.stuckTimer = 0;
         this.onStuck(this.racer);
+        this.hint = -1;
       }
     } else {
       this.stuckTimer = Math.max(0, this.stuckTimer - dt * 2);

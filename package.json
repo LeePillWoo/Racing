@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node tests/regression.mjs",
+    "test:browser": "node tests/browser-check.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.20.0",

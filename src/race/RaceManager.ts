@@ -1,133 +1,101 @@
 import * as THREE from "three";
-import { TrackPath } from "../track/TrackPath";
-import { Vehicle } from "../vehicle/Vehicle";
+import { TrackPath, ROAD_HALF_WIDTH } from "../track/TrackPath";
+import type { Vehicle } from "../vehicle/Vehicle";
 
 export interface Racer {
-  id: string;
-  name: string;
-  isPlayer: boolean;
-  vehicle: Vehicle;
-  color: THREE.ColorRepresentation;
-  sampleHint: number;
-  lastU: number;
-  distanceTraveled: number;
-  highestLapFloor: number;
-  lapStartTimeMs: number;
-  lapTimesMs: number[];
-  bestLapMs: number | null;
-  finished: boolean;
-  finishTimeMs: number | null;
-  finishOrder: number | null;
-  rank: number;
+  id: string; name: string; isPlayer: boolean; vehicle: Vehicle; color: THREE.ColorRepresentation;
+  sampleHint: number; lastU: number; distanceTraveled: number; highestLapFloor: number;
+  lapStartTimeMs: number; lapTimesMs: number[]; bestLapMs: number | null;
+  finished: boolean; finishTimeMs: number | null; finishOrder: number | null; rank: number;
 }
-
 export interface RaceEvents {
   onLapCompleted?: (racer: Racer, lapMs: number, lapNumber: number) => void;
   onRaceFinished?: (racer: Racer, place: number) => void;
 }
 
-const MAX_PLAUSIBLE_STEP_DISTANCE = 25; // meters per physics substep; guards against projection glitches
-
 export class RaceManager {
   readonly racers: Racer[] = [];
-  readonly totalLaps: number;
-  private readonly path: TrackPath;
-  private events: RaceEvents;
   private clockMs = 0;
   private finishCounter = 0;
   private raceOver = false;
-
-  constructor(path: TrackPath, totalLaps: number, events: RaceEvents = {}) {
-    this.path = path;
-    this.totalLaps = totalLaps;
-    this.events = events;
-  }
+  constructor(private readonly path: TrackPath, readonly totalLaps: number, private readonly events: RaceEvents = {}) {}
 
   addRacer(id: string, name: string, isPlayer: boolean, vehicle: Vehicle, color: THREE.ColorRepresentation): Racer {
     const { u, index } = this.path.projectPoint(vehicle.position());
+    // All grid positions are behind the common start/finish line.
+    const distanceTraveled = u > this.path.totalLength / 2 ? u - this.path.totalLength : u;
     const racer: Racer = {
-      id,
-      name,
-      isPlayer,
-      vehicle,
-      color,
-      sampleHint: index,
-      lastU: u,
-      distanceTraveled: 0,
-      highestLapFloor: 0,
-      lapStartTimeMs: 0,
-      lapTimesMs: [],
-      bestLapMs: null,
-      finished: false,
-      finishTimeMs: null,
-      finishOrder: null,
-      rank: this.racers.length + 1,
+      id, name, isPlayer, vehicle, color, sampleHint: index, lastU: u, distanceTraveled,
+      highestLapFloor: 0, lapStartTimeMs: 0, lapTimesMs: [], bestLapMs: null,
+      finished: false, finishTimeMs: null, finishOrder: null, rank: this.racers.length + 1,
     };
     this.racers.push(racer);
     return racer;
   }
 
-  get isRaceOver(): boolean {
-    return this.raceOver;
-  }
-
+  get isRaceOver(): boolean { return this.raceOver; }
   currentLapMs(racer: Racer): number {
-    return this.clockMs - racer.lapStartTimeMs;
+    return racer.finished ? (racer.lapTimesMs.at(-1) ?? 0) : this.clockMs - racer.lapStartTimeMs;
   }
 
-  /** Call once per render frame (after all physics substeps for this frame have run). */
   update(dtMs: number): void {
+    if (this.raceOver) return;
+    const previousClock = this.clockMs;
     this.clockMs += dtMs;
-
+    const finishers: Racer[] = [];
     for (const racer of this.racers) {
-      const { u, index } = this.path.projectPoint(racer.vehicle.position(), racer.sampleHint);
+      if (racer.finished) continue;
+      const { u, index, distance } = this.path.projectPoint(racer.vehicle.position(), racer.sampleHint);
+      let diff = u - racer.lastU;
+      if (diff > this.path.totalLength / 2) diff -= this.path.totalLength;
+      else if (diff < -this.path.totalLength / 2) diff += this.path.totalLength;
+      // Preserve the last valid location for reset; driving through the infield earns no progress.
+      if (Math.abs(diff) >= 25 || distance > ROAD_HALF_WIDTH + 3) continue;
       racer.sampleHint = index;
-
-      let rawDiff = u - racer.lastU;
-      if (rawDiff > this.path.totalLength / 2) rawDiff -= this.path.totalLength;
-      else if (rawDiff < -this.path.totalLength / 2) rawDiff += this.path.totalLength;
-      if (Math.abs(rawDiff) < MAX_PLAUSIBLE_STEP_DISTANCE) {
-        racer.distanceTraveled += rawDiff;
-      }
+      const before = racer.distanceTraveled;
+      racer.distanceTraveled += diff;
       racer.lastU = u;
-
-      const lapFloor = Math.max(0, Math.floor(racer.distanceTraveled / this.path.totalLength));
-      if (lapFloor > racer.highestLapFloor && !racer.finished) {
-        racer.highestLapFloor = lapFloor;
-        const lapMs = this.clockMs - racer.lapStartTimeMs;
+      const lap = Math.max(0, Math.floor(racer.distanceTraveled / this.path.totalLength));
+      if (lap > racer.highestLapFloor) {
+        const boundary = lap * this.path.totalLength;
+        const fraction = diff > 0 ? THREE.MathUtils.clamp((boundary - before) / diff, 0, 1) : 1;
+        const crossingTime = previousClock + dtMs * fraction;
+        const lapMs = crossingTime - racer.lapStartTimeMs;
+        racer.highestLapFloor = lap;
         racer.lapTimesMs.push(lapMs);
-        racer.bestLapMs = racer.bestLapMs === null ? lapMs : Math.min(racer.bestLapMs, lapMs);
-        racer.lapStartTimeMs = this.clockMs;
-        this.events.onLapCompleted?.(racer, lapMs, lapFloor);
-
-        if (lapFloor >= this.totalLaps) {
+        racer.bestLapMs = Math.min(racer.bestLapMs ?? Infinity, lapMs);
+        racer.lapStartTimeMs = crossingTime;
+        this.events.onLapCompleted?.(racer, lapMs, lap);
+        if (lap >= this.totalLaps) {
           racer.finished = true;
-          racer.finishTimeMs = this.clockMs;
-          this.finishCounter++;
-          racer.finishOrder = this.finishCounter;
-          this.events.onRaceFinished?.(racer, this.finishCounter);
-          if (racer.isPlayer) this.raceOver = true;
+          racer.finishTimeMs = crossingTime;
+          finishers.push(racer);
         }
       }
     }
-
-    const ordered = [...this.racers].sort((a, b) => {
-      if (a.finishOrder !== null || b.finishOrder !== null) {
-        return (a.finishOrder ?? Infinity) - (b.finishOrder ?? Infinity);
-      }
-      return b.distanceTraveled - a.distanceTraveled;
+    // Crossing time, not array order, decides a close finish in the same frame.
+    finishers.sort((a, b) => a.finishTimeMs! - b.finishTimeMs!).forEach(racer => {
+      racer.finishOrder = ++this.finishCounter;
+      this.events.onRaceFinished?.(racer, racer.finishOrder);
+      if (racer.isPlayer) this.raceOver = true;
     });
-    ordered.forEach((racer, i) => (racer.rank = i + 1));
+    [...this.racers].sort((a, b) => {
+      if (a.finishOrder !== null || b.finishOrder !== null) return (a.finishOrder ?? Infinity) - (b.finishOrder ?? Infinity);
+      return b.distanceTraveled - a.distanceTraveled;
+    }).forEach((racer, i) => { racer.rank = i + 1; });
   }
 
   resetRacerToTrack(racer: Racer): void {
     const frame = this.path.frameAtDistance(racer.lastU);
     const yaw = Math.atan2(frame.tangent.x, frame.tangent.z);
-    const pos = frame.point.clone().addScaledVector(frame.right, 0);
-    racer.vehicle.resetTo(pos, yaw);
+    // Prefer a clear lane so a recovery does not place two chassis inside each other.
+    const offsets = [0, -3.2, 3.2, -6, 6];
+    const lane = offsets.find(offset => {
+      const candidate = frame.point.clone().addScaledVector(frame.right, offset);
+      return this.racers.every(other => other === racer || other.vehicle.position().distanceTo(candidate) > 4);
+    }) ?? 0;
+    racer.vehicle.resetTo(frame.point.clone().addScaledVector(frame.right, lane), yaw);
   }
 
-  player(): Racer | undefined {
-    return this.racers.find((r) => r.isPlayer);
-  }
+  player(): Racer | undefined { return this.racers.find(racer => racer.isPlayer); }
 }
