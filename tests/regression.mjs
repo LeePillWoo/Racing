@@ -98,7 +98,7 @@ check("suspension settles above ground with wheel contact", () => {
 simulate(3, { ...idle, throttle: 1 });
 check("throttle accelerates forward", () => { assert.ok(car.telemetry.forwardSpeedMs > 10); });
 simulate(1, { ...idle, throttle: 1, steer: 0.45 });
-check("right steering turns toward positive X", () => { assert.ok(car.forwardVector().x > 0.05); });
+check("right steering turns toward the car's right (negative X)", () => { assert.ok(car.forwardVector().x < -0.05); });
 car.resetTo(new THREE.Vector3(0,0,0), 0); simulate(1);
 simulate(3, { ...idle, brake: 1 });
 check("reverse continues beyond the former 0.6 m/s cutoff", () => {

@@ -135,7 +135,9 @@ export class Vehicle {
       config.maxSteerHighSpeed,
       smoothstep(0, config.steerHighSpeedThreshold, Math.abs(forwardSpeed))
     );
-    const targetSteer = input.steer * steerLimit;
+    // input.steer is +1 for right, but a positive yaw rotation about +Y turns the +Z forward
+    // axis toward +X, which is the car's left — so the driver-facing sign is inverted here.
+    const targetSteer = -input.steer * steerLimit;
     this.currentSteerAngle = damp(this.currentSteerAngle, targetSteer, config.steerResponse, dt);
     for (const i of FRONT_WHEELS) this.controller.setWheelSteering(i, this.currentSteerAngle);
     for (const i of REAR_WHEELS) this.controller.setWheelSteering(i, 0);
@@ -206,7 +208,7 @@ export class Vehicle {
     // --- drift-assist yaw torque (arcade helper to make slides controllable) ---
     const driftThresholdRad = (8 * Math.PI) / 180;
     if (maxRearSlip > driftThresholdRad && speed > config.driftAssistMinSpeed && Math.abs(input.steer) > 0.05) {
-      this.body.addTorque({ x: 0, y: input.steer * config.driftAssistTorque, z: 0 }, true);
+      this.body.addTorque({ x: 0, y: -input.steer * config.driftAssistTorque, z: 0 }, true);
     }
 
     this.controller.updateVehicle(dt, undefined, undefined, this.queryFilterPredicate);

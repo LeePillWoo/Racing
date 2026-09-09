@@ -42,7 +42,7 @@ export class AIController {
     const toTarget = targetPoint.clone().sub(pos);
     const invQuat = vehicle.quaternion().clone().invert();
     const local = toTarget.applyQuaternion(invQuat);
-    const angle = Math.atan2(local.x, Math.max(0.001, local.z));
+    const angle = Math.atan2(-local.x, Math.max(0.001, local.z));
     const steer = clamp(angle * 1.7, -1, 1);
 
     const turnAngle = nearFrame.tangent.angleTo(farFrame.tangent);
