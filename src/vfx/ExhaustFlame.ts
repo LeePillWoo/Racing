@@ -14,7 +14,7 @@ export class ExhaustFlame {
     pipe.rotation.x = Math.PI / 2;
     this.root.add(pipe, this.plume);
     for (const [radius, length, color, opacity] of [
-      [0.23, 1.6, 0xff7020, 0.7], [0.115, 0.85, 0x9eeeff, 0.95],
+      [0.28, 2.3, 0xff7020, 0.7], [0.14, 1.25, 0x9eeeff, 0.95],
     ]) {
       const geometry = new THREE.ConeGeometry(radius, length, 12);
       geometry.rotateX(-Math.PI / 2);

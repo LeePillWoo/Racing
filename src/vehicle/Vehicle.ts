@@ -83,6 +83,9 @@ export class Vehicle {
     grounded: false, x: 0, y: 0, z: 0, slipDeg: 0, isRear: i === WHEEL_RL || i === WHEEL_RR,
   }));
   private currentSteerAngle = 0;
+  private visualPitch = 0;
+  private readonly wheelSpin = [0, 0, 0, 0];
+  private readonly previousWheelSpin = [0, 0, 0, 0];
   private lastTelemetry: VehicleTelemetry = { ...IDLE_TELEMETRY };
 
   constructor(
@@ -285,7 +288,7 @@ export class Vehicle {
       if (wheelGrounded) grounded = true;
       const state = this.wheelContactStates[i];
       state.grounded = wheelGrounded;
-      state.slipDeg = Math.max(Math.abs(slipAngle) * (180 / Math.PI), isRear && input.handbrake && speed > 5 ? 24 : 0);
+      state.slipDeg = Math.max(Math.abs(slipAngle) * (180 / Math.PI), isRear && input.handbrake && speed > 1 ? 32 * smoothstep(1, 8, speed) : 0);
       const contactPoint = wheelGrounded ? this.controller.wheelContactPoint(i) : null;
       if (contactPoint) {
         state.x = contactPoint.x;
@@ -318,6 +321,7 @@ export class Vehicle {
       brakeAll = config.rollingResistance;
     }
 
+    if (input.handbrake) throttleCmd = 0;
     const engineForce = this.drivetrain.update(dt, forwardSpeed, throttleCmd, reverseCmd, driftState.boostMultiplier);
     // Rapier applies the value per wheel, so split the axle's total between the driven pair.
     const perWheelForce = engineForce / REAR_WHEELS.length;
@@ -330,7 +334,7 @@ export class Vehicle {
     }
 
     if (driftState.boosting) {
-      const thrust = config.chassisMass * 8;
+      const thrust = config.chassisMass * config.boostAcceleration;
       this.body.addForce({ x: forward.x * thrust, y: 0, z: forward.z * thrust }, true);
     }
     // --- aerodynamic drag: what actually sets top speed now that gearing sets the drive force ---
@@ -369,7 +373,7 @@ export class Vehicle {
 
       // Sliding sideways otherwise scrubs off all the entry speed; feed a little of it back along
       // the heading so a held drift stays quick enough to be worth taking.
-      if (forwardSpeed > 1) {
+      if (forwardSpeed > 1 && !input.handbrake) {
         const scrub = Math.abs(linvelVec.dot(right));
         const thrust = Math.min(scrub * config.driftThrustPerScrub, config.maxDriftThrust) * driftBlend;
         this.body.addForce({ x: forward.x * thrust, y: 0, z: forward.z * thrust }, true);
@@ -386,6 +390,25 @@ export class Vehicle {
     this.previousVelocityZ = linvel.z;
 
     this.controller.updateVehicle(dt, undefined, undefined, this.queryFilterPredicate);
+    // Locked rear tyres scrub speed even when lateral grip is reduced for a slide.
+    // Cap the impulse at the current horizontal momentum so braking cannot reverse the car.
+    const rearGrounded = REAR_WHEELS.some(i => this.controller.wheelIsInContact(i));
+    if (input.handbrake && rearGrounded) {
+      const velocity = this.body.linvel();
+      const horizontalSpeed = Math.hypot(velocity.x, velocity.z);
+      if (horizontalSpeed > 0.001) {
+        const impulse = this.body.mass() * Math.min(horizontalSpeed, config.handbrakeDeceleration * dt);
+        this.body.applyImpulse({ x: -velocity.x / horizontalSpeed * impulse, y: 0, z: -velocity.z / horizontalSpeed * impulse }, true);
+      }
+    }
+    for (let i = 0; i < 4; i++) {
+      const spin = this.controller.wheelRotation(i) ?? 0;
+      if (!(input.handbrake && i >= 2)) this.wheelSpin[i] += spin - this.previousWheelSpin[i];
+      this.previousWheelSpin[i] = spin;
+    }
+    // Visual weight transfer pivots around the rear axle; physics stays upright and steerable.
+    const targetPitch = driftState.boosting && grounded ? 0.065 * smoothstep(0, 8, Math.max(0, forwardSpeed)) : 0;
+    this.visualPitch = damp(this.visualPitch, targetPitch, targetPitch > this.visualPitch ? 10 : 6, dt);
     this.brakeLightsOn = brakeAll > config.rollingResistance + 0.01 || input.handbrake;
 
     this.exhaust.update(dt, driftState.boosting);
@@ -411,6 +434,11 @@ export class Vehicle {
     const r = this.body.rotation();
     this.meshes.root.position.set(t.x, t.y, t.z);
     this.meshes.root.quaternion.set(r.x, r.y, r.z, r.w);
+    const pivot = new THREE.Vector3(0, 0, this.config.wheelBaseRear);
+    const tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -this.visualPitch);
+    const offset = pivot.clone().sub(pivot.clone().applyQuaternion(tilt)).applyQuaternion(this.meshes.root.quaternion);
+    this.meshes.root.position.add(offset);
+    this.meshes.root.quaternion.multiply(tilt);
 
     for (let i = 0; i < 4; i++) {
       const local = this.wheelLocal[i];
@@ -419,7 +447,7 @@ export class Vehicle {
       wheelMesh.position.set(local.x, this.config.connectionPointY - susLength, local.z);
 
       const steer = this.controller.wheelSteering(i) ?? 0;
-      const spin = this.controller.wheelRotation(i) ?? 0;
+      const spin = this.wheelSpin[i];
       const qSteer = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), steer);
       const qSpin = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), spin);
       wheelMesh.quaternion.copy(qSteer).multiply(qSpin);
@@ -473,6 +501,9 @@ export class Vehicle {
     this.body.resetForces(true);
     this.body.resetTorques(true);
     this.currentSteerAngle = 0;
+    this.visualPitch = 0;
+    this.wheelSpin.fill(0);
+    for (let i = 0; i < 4; i++) this.previousWheelSpin[i] = this.controller.wheelRotation(i) ?? 0;
     this.brakeLightsOn = false;
     this.touchingWall = false;
     this.pendingImpact = 0;

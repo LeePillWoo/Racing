@@ -52,6 +52,8 @@ export interface VehicleConfig {
   topSpeedMs: number;
   maxBrakeForce: number;
   handbrakeForce: number;
+  handbrakeDeceleration: number;
+  boostAcceleration: number;
   rollingResistance: number;
 
   /** Rapier body damping. Kept low so aeroDragCoefficient sets the high-speed limit instead. */
@@ -128,7 +130,9 @@ export const DEFAULT_VEHICLE_CONFIG: VehicleConfig = {
 
   topSpeedMs: 53, // ~191 km/h, where drive force and drag balance in top gear
   maxBrakeForce: 55,
-  handbrakeForce: 90,
+  handbrakeForce: 160,
+  handbrakeDeceleration: 11,
+  boostAcceleration: 17,
   rollingResistance: 0.35,
 
   linearDamping: 0.02,

@@ -514,4 +514,43 @@ check("head-on cars rebound and can drive again", () => {
   assert.ok(cars[0].linearVelocity().length() > 2);
   physics.world.free();
 });
+
+check("handbrake locks rear wheel visuals and rapidly slows even against throttle", () => {
+  const physics = new PhysicsWorld(rapier);
+  physics.world.createCollider(rapier.ColliderDesc.cuboid(500, 0.5, 500).setTranslation(0, -0.5, 0));
+  const car = new Vehicle(rapier, physics.world, new THREE.Scene(), new THREE.Vector3(0, 1.15, 0), 0, "#fff");
+  const step = (count, input) => { for (let i = 0; i < count; i++) physics.step(1 / 120, dt => car.physicsStep(dt, { ...idle, ...input })); car.syncVisuals(); };
+  step(100, {}); step(480, { throttle: 1 });
+  const before = car.linearVelocity().length();
+  const rear = car.meshes.wheels[2].quaternion.clone();
+  const front = car.meshes.wheels[0].quaternion.clone();
+  step(120, { throttle: 1, handbrake: true, boost: true });
+  const after = car.linearVelocity().length();
+  assert.ok(before - after > 10, "handbrake must shed over 36 km/h in one second: " + before + " -> " + after);
+  assert.ok(rear.angleTo(car.meshes.wheels[2].quaternion) < 1e-6, "rear wheels must stay locked");
+  assert.ok(front.angleTo(car.meshes.wheels[0].quaternion) > 0.01, "front wheels must keep rolling");
+  assert.equal(car.telemetry.boosting, false);
+  assert.ok(car.wheelContacts[2].grounded && car.wheelContacts[2].slipDeg > 9, "locked tyres must emit marks and smoke even while braking straight");
+  step(20, { throttle: 1 });
+  assert.ok(rear.angleTo(car.meshes.wheels[2].quaternion) > 0.01, "rear wheels must resume rolling on release");
+  step(600, { handbrake: true, throttle: 1 });
+  assert.ok(car.linearVelocity().length() < 0.3, "holding the handbrake must stop and hold the car");
+  physics.world.free();
+});
+check("stronger boost lifts the nose while rear tyres remain planted and settles on release", () => {
+  const physics = new PhysicsWorld(rapier);
+  physics.world.createCollider(rapier.ColliderDesc.cuboid(500, 0.5, 500).setTranslation(0, -0.5, 0));
+  const car = new Vehicle(rapier, physics.world, new THREE.Scene(), new THREE.Vector3(0, 1.15, 0), 0, "#fff");
+  const step = (count, boost) => { for (let i = 0; i < count; i++) physics.step(1 / 120, dt => car.physicsStep(dt, { ...idle, boost })); car.syncVisuals(); car.meshes.root.updateMatrixWorld(true); };
+  step(100, false); step(120, true);
+  assert.ok(car.telemetry.forwardSpeedMs > 20, "boost from rest must reach over 72 km/h within one second");
+  const front = car.meshes.wheels[0].getWorldPosition(new THREE.Vector3());
+  const rear = car.meshes.wheels[2].getWorldPosition(new THREE.Vector3());
+  assert.ok(front.y - rear.y > 0.15 && front.y - rear.y < 0.3, "nose should rise slightly: " + (front.y - rear.y));
+  assert.ok(Math.abs(rear.y - car.config.wheelRadius) < 0.08, "rear tyres should stay on the road");
+  assert.ok(car.forwardVector().y === 0, "visual tilt must not destabilize physics");
+  step(120, false);
+  assert.ok(Math.abs(car.meshes.wheels[0].getWorldPosition(new THREE.Vector3()).y - car.meshes.wheels[2].getWorldPosition(new THREE.Vector3()).y) < 0.02);
+  physics.world.free();
+});
 console.log("Completed " + checks.length + " regression checks.");
