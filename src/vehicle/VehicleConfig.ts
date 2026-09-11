@@ -6,7 +6,7 @@ export interface VehicleConfig {
   chassisMass: number;
   chassisCenterOfMassOffsetY: number;
   chassisFriction: number;
-  /** Bounciness in car-to-car contact. Wall hits use the barrier's higher value instead. */
+  /** Bounciness in car-to-car contact. Walls use a lower solver value and a capped response. */
   chassisRestitution: number;
   spawnHeight: number;
 
@@ -91,6 +91,8 @@ export interface VehicleConfig {
   wallBounceMinSpeed: number;
   /** Floor on the rebound so even a crawl into the wall frees the car instead of pinning it. */
   wallBounceMinRebound: number;
+  /** Limit wall escape speed even when boosting into a barrier. */
+  wallBounceMaxRebound: number;
   /** Steady outward push while touching, so the car can never stay glued to the barrier. */
   wallSeparationForce: number;
   /** Yaw kick per m/s of impact, which makes a hit read as a knock rather than a dead stop. */
@@ -103,7 +105,7 @@ export const DEFAULT_VEHICLE_CONFIG: VehicleConfig = {
   chassisMass: 780,
   chassisCenterOfMassOffsetY: -0.08,
   chassisFriction: 0.2,
-  chassisRestitution: 0.65,
+  chassisRestitution: 0.35,
   spawnHeight: 1.15,
 
   wheelRadius: 0.46,
@@ -154,12 +156,13 @@ export const DEFAULT_VEHICLE_CONFIG: VehicleConfig = {
   maxDriftThrust: 2600,
   driftAssistMinSpeed: 6,
 
-  wallBounceRestitution: 0.55,
+  wallBounceRestitution: 0.28,
   wallBounceMinSpeed: 0.6,
-  wallBounceMinRebound: 3.2,
-  wallSeparationForce: 5200,
-  wallImpactYawKick: 260,
-  maxWallImpactYawKick: 2200,
+  wallBounceMinRebound: 1.8,
+  wallBounceMaxRebound: 4.2,
+  wallSeparationForce: 1800,
+  wallImpactYawKick: 90,
+  maxWallImpactYawKick: 750,
 };
 
 /**

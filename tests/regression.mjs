@@ -431,8 +431,8 @@ for (let i = 0; i < 240; i++) circuitPhysics.step(1 / 120, dt => aiCar.physicsSt
 check("trackside barrier stops a car instead of allowing passage", () => { assert.ok(path.projectPoint(aiCar.position()).distance < 13.6); });
 circuitPhysics.world.free();
 
-// Hitting a barrier should cost a driver time, not end the run: a brush along the wall must
-// keep almost all of the speed, and even a square hit has to bounce the car back onto the road.
+// A brush should preserve the race, while a square hit should make room to steer again
+// without launching the car back across the road.
 function crashIntoBarrier(angleDeg) {
   const world = new PhysicsWorld(rapier);
   buildGroundCollider(rapier, world.world, path);
@@ -441,7 +441,7 @@ function crashIntoBarrier(angleDeg) {
   spawn.y = DEFAULT_VEHICLE_CONFIG.spawnHeight;
   const car = new Vehicle(rapier, world.world, new THREE.Scene(), spawn,
     Math.atan2(frame.tangent.x, frame.tangent.z) + (angleDeg * Math.PI) / 180, "#fff");
-  let approach = 0, rebound = 0, hit = false, since = 0, minOffAfter = Infinity;
+  let approach = 0, rebound = 0, hit = false, since = 0, minOffAfter = Infinity, contactOffset = 0;
   for (let i = 0; i < 12 * 120; i++) {
     // Release the throttle on contact, so this measures the bounce and not the engine pushing
     // the car back into the wall.
@@ -449,7 +449,8 @@ function crashIntoBarrier(angleDeg) {
     const speed = car.linearVelocity().length();
     const off = path.projectPoint(car.position()).distance;
     if (!hit) {
-      if (off > 8.4) { hit = true; approach = speed; }
+      const impact = car.consumeImpact();
+      if (impact > 0) { hit = true; approach = Math.max(speed, impact); contactOffset = off; }
     } else if (++since > 30) {
       rebound = Math.max(rebound, speed);
       minOffAfter = Math.min(minOffAfter, off);
@@ -457,7 +458,8 @@ function crashIntoBarrier(angleDeg) {
     }
   }
   world.world.free();
-  return { approach, rebound, minOffAfter, kept: rebound / Math.max(approach, 0.01) };
+  assert.ok(hit, "car must actually contact the barrier");
+  return { approach, rebound, minOffAfter, escape: contactOffset - minOffAfter, kept: rebound / Math.max(approach, 0.01) };
 }
 const graze = crashIntoBarrier(15);
 const square = crashIntoBarrier(90);
@@ -467,10 +469,64 @@ console.log(JSON.stringify({
 }));
 check("barrier contact deflects the car instead of stopping the run", () => {
   assert.ok(graze.kept > 0.85, "a glancing hit scrubbed too much speed, kept " + (graze.kept * 100).toFixed(0) + "%");
-  assert.ok(square.kept > 0.5, "a square hit should throw most of the speed back, kept " + (square.kept * 100).toFixed(0) + "%");
-  // The point of the rebound is that a head-on mistake puts you back on the track, not parked
-  // against the barrier with the throttle doing nothing.
-  assert.ok(square.minOffAfter < 4, "a square hit must carry the car back across the road, got " + square.minOffAfter.toFixed(1) + "m");
+  assert.ok(square.kept > 0.03 && square.kept < 0.45, "a square hit needs a short rebound, kept " + (square.kept * 100).toFixed(0) + "%");
+  assert.ok(square.escape > 0.4 && square.escape < 3.5, "a square hit must clear the barrier without crossing the road: " + square.escape.toFixed(1) + "m");
+});
+
+// Use real solver contacts and prescribed entry speeds so these bounds still cover a
+// boost-speed crash if acceleration, track geometry, or the camera changes later.
+function measureFlatWallCrash(entrySpeed, driveOut = false, boost = false) {
+  const physics = new PhysicsWorld(rapier);
+  physics.world.createCollider(rapier.ColliderDesc.cuboid(500, 0.5, 500).setTranslation(0, -0.5, 0));
+  const wall = physics.world.createCollider(rapier.ColliderDesc.cuboid(100, 1, 0.25)
+    .setTranslation(0, 1, 10).setFriction(0.04)
+    .setFrictionCombineRule(rapier.CoefficientCombineRule.Min)
+    .setRestitution(0.1).setRestitutionCombineRule(rapier.CoefficientCombineRule.Min));
+  const yaw = driveOut ? Math.PI / 4 : 0;
+  const car = new Vehicle(rapier, physics.world, new THREE.Scene(), new THREE.Vector3(0, 1.15, 0), yaw, "#fff");
+  for (let i = 0; i < 100; i++) physics.step(1 / 120, dt => car.physicsStep(dt, idle));
+  car.body.setLinvel({ x: Math.sin(yaw) * entrySpeed, y: 0, z: Math.cos(yaw) * entrySpeed }, true);
+  let contactPosition = null, framesAfterHit = 0, peakRebound = 0, maxEscape = 0, peakYawRate = 0, recoveryYawRate = 0;
+  for (let i = 0; i < 6 * 120; i++) {
+    const input = driveOut ? { ...idle, throttle: 1, boost, steer: contactPosition ? -1 : 0 } : idle;
+    physics.step(1 / 120, dt => car.physicsStep(dt, input));
+    if (!contactPosition) {
+      physics.world.contactPair(car.body.collider(0), wall, manifold => {
+        if (manifold.numSolverContacts() > 0) contactPosition = car.position();
+      });
+    }
+    if (contactPosition) {
+      peakRebound = Math.max(peakRebound, -car.linearVelocity().z);
+      maxEscape = Math.max(maxEscape, contactPosition.z - car.position().z);
+      peakYawRate = Math.max(peakYawRate, Math.abs(car.yawRate()));
+      if (framesAfterHit >= 12) recoveryYawRate = Math.max(recoveryYawRate, Math.abs(car.yawRate()));
+      if (++framesAfterHit >= (driveOut ? 3 : 2) * 120) break;
+    }
+  }
+  assert.ok(contactPosition, "car never reached the wall at " + entrySpeed + " m/s");
+  const result = { entrySpeed, peakRebound, maxEscape, peakYawRate, recoveryYawRate,
+    alongWall: car.position().x - contactPosition.x, finalSpeed: car.linearVelocity().length() };
+  physics.world.free();
+  return result;
+}
+const flatWallHits = [3, 15, 35, 55].map(speed => measureFlatWallCrash(speed));
+console.log(JSON.stringify({ flatWallHits }));
+check("wall rebounds stay short at ordinary and boost speeds", () => {
+  for (const hit of flatWallHits) {
+    assert.ok(hit.peakRebound > 0.7, "impact must create separation: " + JSON.stringify(hit));
+    assert.ok(hit.peakRebound < 7, "impact launched the car too quickly: " + JSON.stringify(hit));
+    assert.ok(hit.maxEscape > 0.4 && hit.maxEscape < 3.5, "rebound must clear the wall without crossing the road: " + JSON.stringify(hit));
+    assert.ok(hit.peakYawRate < 0.5, "a square hit should not spin the car: " + JSON.stringify(hit));
+  }
+});
+const poweredWallHits = [false, true].map(boost => ({ boost, ...measureFlatWallCrash(35, true, boost) }));
+console.log(JSON.stringify({ poweredWallHits }));
+check("holding throttle or boost after a wall hit still permits steering away", () => {
+  for (const hit of poweredWallHits) {
+    assert.ok(hit.maxEscape > 0.4, "powered contact pinned the car: " + JSON.stringify(hit));
+    assert.ok(hit.alongWall > 4 && hit.finalSpeed > 4, "steering must resume useful travel after contact: " + JSON.stringify(hit));
+    assert.ok(hit.recoveryYawRate < 2.5, "powered contact should remain controllable after the initial knock: " + JSON.stringify(hit));
+  }
 });
 
 
@@ -504,14 +560,20 @@ check("head-on cars rebound and can drive again", () => {
   for (let i = 0; i < 100; i++) physics.step(1 / 120, dt => cars.forEach(c => c.physicsStep(dt, idle)));
   cars[0].body.setLinvel({ x: 0, y: 0, z: 18 }, true);
   cars[1].body.setLinvel({ x: 0, y: 0, z: -18 }, true);
-  let bounced = false;
+  let bounced = false, peakRebound = 0;
   for (let i = 0; i < 120; i++) {
     physics.step(1 / 120, dt => cars.forEach(c => c.physicsStep(dt, idle)));
     if (cars[0].linearVelocity().z < -2 && cars[1].linearVelocity().z > 2) bounced = true;
+    peakRebound = Math.max(peakRebound, -cars[0].linearVelocity().z, cars[1].linearVelocity().z);
   }
   assert.ok(bounced, "both cars must separate after the impact");
-  for (let i = 0; i < 120; i++) physics.step(1 / 120, dt => cars[0].physicsStep(dt, { ...idle, throttle: 1, steer: 1 }));
-  assert.ok(cars[0].linearVelocity().length() > 2);
+  assert.ok(peakRebound < 7, "car-to-car impact should not throw both cars down the road: " + peakRebound.toFixed(1) + " m/s");
+  // Let the throttle brake the backward rebound, then build forward speed again.
+  for (let i = 0; i < 240; i++) physics.step(1 / 120, dt => cars.forEach((car, index) =>
+    car.physicsStep(dt, index === 0 ? { ...idle, throttle: 1, steer: 1 } : idle)));
+  const finalSpeed = cars[0].telemetry.forwardSpeedMs;
+  console.log(JSON.stringify({ carCollision: { peakRebound, finalSpeed } }));
+  assert.ok(finalSpeed > 2, "car should accelerate and steer after contact: " + finalSpeed.toFixed(1) + " m/s");
   physics.world.free();
 });
 

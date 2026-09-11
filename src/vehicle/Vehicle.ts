@@ -66,6 +66,9 @@ export class Vehicle {
   private readonly chassisCollider: RAPIER.Collider;
   private readonly chassisColliderHandle: number;
   private touchingWall = false;
+  private wallRecoveryTime = 0;
+  private wallNormalX = 0;
+  private wallNormalZ = 0;
   /**
    * Chassis velocity as of the previous step, before the solver resolved anything. Contacts are
    * only reported on the step *after* the solver has already cancelled the closing speed, so
@@ -188,11 +191,11 @@ export class Vehicle {
       : -(this.previousVelocityX * normalX + this.previousVelocityZ * normalZ);
 
     if (!this.touchingWall && approachSpeed > config.wallBounceMinSpeed) {
-      const rebound = Math.max(approachSpeed * config.wallBounceRestitution, config.wallBounceMinRebound);
-      // Top up to the target outward speed without stacking another bounce on the solver.
+      const rebound = clamp(approachSpeed * config.wallBounceRestitution, config.wallBounceMinRebound, config.wallBounceMaxRebound);
+      // Match the capped outward speed, including any bounce already supplied by the solver.
       const velocity = this.body.linvel();
       const outwardSpeed = velocity.x * normalX + velocity.z * normalZ;
-      const impulse = this.body.mass() * Math.max(0, rebound - outwardSpeed);
+      const impulse = this.body.mass() * (rebound - outwardSpeed);
       this.body.applyImpulse({ x: normalX * impulse, y: 0, z: normalZ * impulse }, true);
 
       const kick = clamp(approachSpeed * config.wallImpactYawKick, 0, config.maxWallImpactYawKick);
@@ -206,6 +209,9 @@ export class Vehicle {
       this.pendingImpact = Math.max(this.pendingImpact, approachSpeed);
     }
 
+    this.wallRecoveryTime = 0.7;
+    this.wallNormalX = normalX;
+    this.wallNormalZ = normalZ;
     this.touchingWall = true;
     this.body.addForce({ x: normalX * config.wallSeparationForce, y: 0, z: normalZ * config.wallSeparationForce }, true);
   }
@@ -227,6 +233,12 @@ export class Vehicle {
     // Rapier retains user forces/torques until explicitly cleared.
     this.body.resetForces(false);
     this.body.resetTorques(false);
+    this.wallRecoveryTime = Math.max(0, this.wallRecoveryTime - dt);
+    this.applyWallResponse();
+    if (this.wallRecoveryTime > 0) {
+      const angularVelocity = this.body.angvel();
+      this.body.setAngvel({ x: angularVelocity.x, y: clamp(angularVelocity.y, -1.3, 1.3), z: angularVelocity.z }, true);
+    }
     const linvel = this.body.linvel();
     const angvel = this.body.angvel();
     const rot = this.body.rotation();
@@ -236,6 +248,8 @@ export class Vehicle {
     const linvelVec = new THREE.Vector3(linvel.x, linvel.y, linvel.z);
     const forwardSpeed = linvelVec.dot(forward);
     const speed = linvelVec.length();
+    const noseIntoWall = -(forward.x * this.wallNormalX + forward.z * this.wallNormalZ);
+    const wallDriveScale = this.wallRecoveryTime > 0 ? 1 - smoothstep(0.1, 0.7, noseIntoWall) : 1;
 
     // --- steering ---
     const steerLimit = lerp(
@@ -300,7 +314,7 @@ export class Vehicle {
     }
 
     // --- drift scoring, which feeds the boost multiplier the engine reads below ---
-    this.drift.update(dt, maxRearSlip, speed, grounded, input.boost && !input.handbrake && input.brake === 0 && forwardSpeed > -0.5);
+    this.drift.update(dt, maxRearSlip, speed, grounded, input.boost && !input.handbrake && input.brake === 0 && forwardSpeed > -0.5 && wallDriveScale > 0.9);
     const driftState = this.drift.state;
 
     // --- throttle / brake / reverse ---
@@ -315,13 +329,14 @@ export class Vehicle {
         throttleCmd = input.brake;
       }
     } else if (input.throttle > 0 || driftState.boosting) {
-      if (forwardSpeed < -0.5) brakeAll = config.maxBrakeForce * input.throttle;
+      if (forwardSpeed < -0.5) brakeAll = config.maxBrakeForce * input.throttle * wallDriveScale;
       else throttleCmd = driftState.boosting ? 1 : input.throttle;
     } else {
       brakeAll = config.rollingResistance;
     }
 
     if (input.handbrake) throttleCmd = 0;
+    if (!reverseCmd) throttleCmd *= wallDriveScale;
     const engineForce = this.drivetrain.update(dt, forwardSpeed, throttleCmd, reverseCmd, driftState.boostMultiplier);
     // Rapier applies the value per wheel, so split the axle's total between the driven pair.
     const perWheelForce = engineForce / REAR_WHEELS.length;
@@ -373,7 +388,7 @@ export class Vehicle {
 
       // Sliding sideways otherwise scrubs off all the entry speed; feed a little of it back along
       // the heading so a held drift stays quick enough to be worth taking.
-      if (forwardSpeed > 1 && !input.handbrake) {
+      if (forwardSpeed > 1 && !input.handbrake && this.wallRecoveryTime === 0) {
         const scrub = Math.abs(linvelVec.dot(right));
         const thrust = Math.min(scrub * config.driftThrustPerScrub, config.maxDriftThrust) * driftBlend;
         this.body.addForce({ x: forward.x * thrust, y: 0, z: forward.z * thrust }, true);
@@ -385,7 +400,14 @@ export class Vehicle {
     if (spinExcess > 0) assistTorque -= Math.sign(angvel.y) * spinExcess * config.spinDampGain;
     if (assistTorque !== 0) this.body.addTorque({ x: 0, y: assistTorque, z: 0 }, true);
 
-    this.applyWallResponse();
+    // Let the initial knock clear the wall, then settle only the outward component.
+    // Tangential travel and a driver deliberately reversing away remain available.
+    if (this.wallRecoveryTime > 0 && this.wallRecoveryTime < 0.6 && grounded && !input.handbrake && !reverseCmd && noseIntoWall > 0.1) {
+      const outwardSpeed = linvel.x * this.wallNormalX + linvel.z * this.wallNormalZ;
+      const excess = Math.max(0, outwardSpeed - 0.5);
+      const impulse = this.body.mass() * excess * (1 - Math.exp(-5 * dt));
+      this.body.applyImpulse({ x: -this.wallNormalX * impulse, y: 0, z: -this.wallNormalZ * impulse }, true);
+    }
     this.previousVelocityX = linvel.x;
     this.previousVelocityZ = linvel.z;
 
@@ -506,6 +528,9 @@ export class Vehicle {
     for (let i = 0; i < 4; i++) this.previousWheelSpin[i] = this.controller.wheelRotation(i) ?? 0;
     this.brakeLightsOn = false;
     this.touchingWall = false;
+    this.wallRecoveryTime = 0;
+    this.wallNormalX = 0;
+    this.wallNormalZ = 0;
     this.pendingImpact = 0;
     this.previousVelocityX = 0;
     this.previousVelocityZ = 0;

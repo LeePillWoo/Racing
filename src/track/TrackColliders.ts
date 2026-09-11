@@ -17,6 +17,7 @@ export function buildGroundCollider(rapier: typeof RAPIER, world: RAPIER.World, 
       // the lap. The rebound itself is applied in code, not here.
       .setFriction(BARRIER_FRICTION)
       .setFrictionCombineRule(rapier.CoefficientCombineRule.Min)
-      .setRestitution(BARRIER_RESTITUTION));
+      .setRestitution(BARRIER_RESTITUTION)
+      .setRestitutionCombineRule(rapier.CoefficientCombineRule.Min));
   }
 }
