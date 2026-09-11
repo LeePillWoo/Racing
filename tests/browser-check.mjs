@@ -44,6 +44,30 @@ try {
   await page.keyboard.press("KeyC");
   await page.waitForTimeout(200);
   await page.keyboard.press("KeyC");
+  await page.keyboard.down("Space");
+  assert.equal(await page.evaluate(() => window.__racing.input.sample().handbrake), true, "Space should engage the drift handbrake");
+  await page.keyboard.up("Space");
+  assert.equal(await page.evaluate(() => window.__racing.input.sample().handbrake), false);
+  await page.keyboard.press("KeyR");
+  await page.waitForTimeout(500);
+  await page.keyboard.down("ShiftLeft");
+  assert.equal(await page.evaluate(() => window.__racing.input.sample().boost), true);
+  assert.equal(await page.evaluate(() => window.__racing.input.sample().handbrake), false);
+  await page.waitForFunction(() => window.__racing.playerVehicle.telemetry.boosting);
+  assert.equal(await page.evaluate(() => window.__racing.playerVehicle.meshes.root.getObjectByName("exhaust-flame").children[1].visible), true);
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: "artifacts/boost-desktop.png" });
+  await page.keyboard.up("ShiftLeft");
+  await page.waitForFunction(() => !window.__racing.playerVehicle.telemetry.boosting);
+  await page.keyboard.down("KeyW");
+  await page.waitForFunction(() => window.__racing.playerVehicle.telemetry.forwardSpeedMs > 10);
+  await page.keyboard.down("Space");
+  await page.keyboard.down("KeyD");
+  await page.waitForFunction(() => [...window.__racing.tireSmoke.points.geometry.attributes.alpha.array].some(a => a > 0.1));
+  await page.waitForTimeout(250);
+  assert.ok(await page.evaluate(() => [...window.__racing.skidMarks.mesh.geometry.attributes.color.array].some((a, i) => i % 4 === 3 && a > 0.1)));
+  await page.screenshot({ path: "artifacts/drift-desktop.png" });
+  await page.keyboard.up("Space"); await page.keyboard.up("KeyD"); await page.keyboard.up("KeyW");
   const diagnostics = await page.evaluate(() => ({
     cars: window.__racing.raceManager.racers.length,
     drawCalls: window.__racing.renderer.info.render.calls,
@@ -72,6 +96,11 @@ try {
   ]});
   const held = await mobile.evaluate(() => window.__racing.input.sample());
   assert.equal(held.throttle, 1); assert.equal(held.steer, -1);
+  const driftBox = await mobile.locator('[data-control="Space"]').boundingBox();
+  await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [
+    { x: driftBox.x + driftBox.width / 2, y: driftBox.y + driftBox.height / 2, id: 3 },
+  ]});
+  assert.equal(await mobile.evaluate(() => window.__racing.input.sample().handbrake), true, "the DRIFT touch button should engage the handbrake");
   await session.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
   const released = await mobile.evaluate(() => window.__racing.input.sample());
   assert.equal(released.throttle, 0); assert.equal(released.steer, 0);

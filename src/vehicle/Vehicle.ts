@@ -1,6 +1,10 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { DEFAULT_VEHICLE_CONFIG, VehicleConfig, tireLateralGripCurve } from "./VehicleConfig";
+import { ExhaustFlame } from "../vfx/ExhaustFlame";
+import { Drivetrain } from "./Drivetrain";
+import { DriftSystem } from "./DriftSystem";
+import { findWallContact } from "./WallBounce";
 import { buildCarMesh, CarMeshSet } from "./CarMesh";
 import { clamp, damp, lerp, smoothstep } from "../utils/MathUtils";
 import type { InputState } from "../core/InputManager";
@@ -17,25 +21,69 @@ interface WheelLocal {
   z: number;
 }
 
+/** Per-wheel contact state, published each step for the skid mark and tyre smoke effects. */
+export interface WheelContactState {
+  grounded: boolean;
+  x: number;
+  y: number;
+  z: number;
+  slipDeg: number;
+  isRear: boolean;
+}
+
 export interface VehicleTelemetry {
   speedKmh: number;
   forwardSpeedMs: number;
   isDrifting: boolean;
   maxSlipDeg: number;
-  gear: "R" | "N" | "D";
+  /** "R", "N" during a shift, otherwise the gear number. */
+  gear: string;
+  rpm: number;
+  rpmFraction: number;
+  /** Score of the drift chain in progress; banked into driftScoreTotal when it ends. */
+  driftScore: number;
+  driftChain: number;
+  driftScoreTotal: number;
+  boostRemainingSec: number;
+  boosting: boolean;
 }
+
+const IDLE_TELEMETRY: VehicleTelemetry = {
+  speedKmh: 0, forwardSpeedMs: 0, isDrifting: false, maxSlipDeg: 0, gear: "N",
+  rpm: 0, rpmFraction: 0, driftScore: 0, driftChain: 1, driftScoreTotal: 0,
+  boostRemainingSec: 0, boosting: false,
+};
 
 export class Vehicle {
   readonly config: VehicleConfig;
+  private readonly exhaust = new ExhaustFlame();
   readonly body: RAPIER.RigidBody;
   readonly controller: RAPIER.DynamicRayCastVehicleController;
   readonly meshes: CarMeshSet;
 
   private readonly rapier: typeof RAPIER;
+  private readonly world: RAPIER.World;
+  private readonly chassisCollider: RAPIER.Collider;
   private readonly chassisColliderHandle: number;
+  private touchingWall = false;
+  /**
+   * Chassis velocity as of the previous step, before the solver resolved anything. Contacts are
+   * only reported on the step *after* the solver has already cancelled the closing speed, so
+   * this is what the rebound has to be sized from.
+   */
+  private previousVelocityX = 0;
+  private previousVelocityZ = 0;
+  /** Impact speed of the most recent wall hit, consumed by the camera shake. */
+  private pendingImpact = 0;
   private readonly wheelLocal: WheelLocal[];
+  private readonly drivetrain: Drivetrain;
+  private readonly drift: DriftSystem;
+  /** Reused rather than reallocated: this is written every wheel, every substep. */
+  private readonly wheelContactStates: WheelContactState[] = [0, 1, 2, 3].map(i => ({
+    grounded: false, x: 0, y: 0, z: 0, slipDeg: 0, isRear: i === WHEEL_RL || i === WHEEL_RR,
+  }));
   private currentSteerAngle = 0;
-  private lastTelemetry: VehicleTelemetry = { speedKmh: 0, forwardSpeedMs: 0, isDrifting: false, maxSlipDeg: 0, gear: "N" };
+  private lastTelemetry: VehicleTelemetry = { ...IDLE_TELEMETRY };
 
   constructor(
     rapier: typeof RAPIER,
@@ -47,13 +95,14 @@ export class Vehicle {
     config: VehicleConfig = DEFAULT_VEHICLE_CONFIG
   ) {
     this.rapier = rapier;
+    this.world = world;
     this.config = config;
 
     const bodyDesc = rapier.RigidBodyDesc.dynamic()
       .setTranslation(spawnPosition.x, spawnPosition.y, spawnPosition.z)
       .setRotation({ x: 0, y: Math.sin(spawnYawRad / 2), z: 0, w: Math.cos(spawnYawRad / 2) })
-      .setLinearDamping(0.15)
-      .setAngularDamping(1.2)
+      .setLinearDamping(config.linearDamping)
+      .setAngularDamping(config.angularDamping)
       .setCanSleep(false)
       .setCcdEnabled(true)
       // Only yaw (world Y) is allowed to rotate freely — pitch/roll are physically locked out.
@@ -66,9 +115,11 @@ export class Vehicle {
     const colliderDesc = rapier.ColliderDesc.cuboid(config.chassisHalfExtents.x, config.chassisHalfExtents.y, config.chassisHalfExtents.z)
       .setTranslation(0, config.chassisCenterOfMassOffsetY, 0)
       .setMass(config.chassisMass)
-      .setFriction(0.4)
-      .setRestitution(0.05);
+      .setFriction(config.chassisFriction)
+      .setFrictionCombineRule(rapier.CoefficientCombineRule.Min)
+      .setRestitution(config.chassisRestitution);
     const collider = world.createCollider(colliderDesc, this.body);
+    this.chassisCollider = collider;
     this.chassisColliderHandle = collider.handle;
 
     this.controller = world.createVehicleController(this.body);
@@ -101,12 +152,66 @@ export class Vehicle {
       this.controller.setWheelSuspensionRelaxation(i, config.suspensionRelaxation);
       this.controller.setWheelMaxSuspensionTravel(i, config.maxSuspensionTravel);
       this.controller.setWheelMaxSuspensionForce(i, config.maxSuspensionForce);
-      this.controller.setWheelFrictionSlip(i, config.wheelFrictionSlip);
+      this.controller.setWheelFrictionSlip(i, config.tireFrictionFront);
       this.controller.setWheelSideFrictionStiffness(i, config.baseSideFrictionStiffness);
     }
 
+    this.drivetrain = new Drivetrain(config.drivetrain, config.wheelRadius);
+    this.drift = new DriftSystem(config.drift);
+
     this.meshes = buildCarMesh(config, color);
+    this.meshes.root.add(this.exhaust.root);
     scene.add(this.meshes.root);
+  }
+
+  /**
+   * Arcade wall response. The solver alone leaves a car pinned against a barrier — it kills the
+   * closing speed and then friction and the driver's own throttle hold it there. Instead the
+   * rebound is applied explicitly on the frame contact begins, with a floor under it so even a
+   * slow nudge frees the car, plus a steady outward push and a yaw kick for the knock.
+   */
+  private applyWallResponse(): void {
+    const config = this.config;
+    const contact = findWallContact(this.world, this.chassisCollider, this.body);
+    if (!contact) {
+      this.touchingWall = false;
+      return;
+    }
+    const { normalX, normalZ } = contact;
+    // On the first frame of contact the solver has already eaten the closing speed, so size the
+    // rebound from the velocity the car carried in. After that, use the live velocity.
+    const approachSpeed = this.touchingWall
+      ? contact.approachSpeed
+      : -(this.previousVelocityX * normalX + this.previousVelocityZ * normalZ);
+
+    if (!this.touchingWall && approachSpeed > config.wallBounceMinSpeed) {
+      const rebound = Math.max(approachSpeed * config.wallBounceRestitution, config.wallBounceMinRebound);
+      // Top up to the target outward speed without stacking another bounce on the solver.
+      const velocity = this.body.linvel();
+      const outwardSpeed = velocity.x * normalX + velocity.z * normalZ;
+      const impulse = this.body.mass() * Math.max(0, rebound - outwardSpeed);
+      this.body.applyImpulse({ x: normalX * impulse, y: 0, z: normalZ * impulse }, true);
+
+      const kick = clamp(approachSpeed * config.wallImpactYawKick, 0, config.maxWallImpactYawKick);
+      // Scale the kick by how glancing the hit is. A square hit should rebound straight back onto
+      // the track; it is the angled hits, where one corner lands first, that should slew the car.
+      const forward = this.forwardVector();
+      const noseInto = clamp(-(forward.x * normalX + forward.z * normalZ), -1, 1);
+      const glancing = Math.sqrt(Math.max(0, 1 - noseInto * noseInto));
+      const side = Math.sign(forward.x * normalZ - forward.z * normalX) || 1;
+      this.body.applyTorqueImpulse({ x: 0, y: side * kick * glancing, z: 0 }, true);
+      this.pendingImpact = Math.max(this.pendingImpact, approachSpeed);
+    }
+
+    this.touchingWall = true;
+    this.body.addForce({ x: normalX * config.wallSeparationForce, y: 0, z: normalZ * config.wallSeparationForce }, true);
+  }
+
+  /** Impact speed of the last wall hit, in m/s; reading it clears the value. */
+  consumeImpact(): number {
+    const impact = this.pendingImpact;
+    this.pendingImpact = 0;
+    return impact;
   }
 
   private isOwnCollider = (collider: RAPIER.Collider): boolean => collider.handle !== this.chassisColliderHandle;
@@ -142,43 +247,11 @@ export class Vehicle {
     for (const i of FRONT_WHEELS) this.controller.setWheelSteering(i, this.currentSteerAngle);
     for (const i of REAR_WHEELS) this.controller.setWheelSteering(i, 0);
 
-    // --- throttle / brake / reverse ---
-    let engineForce = 0;
-    let brakeAll = 0;
-    if (input.brake > 0) {
-      if (forwardSpeed > 0.5 || input.throttle > 0) {
-        brakeAll = config.maxBrakeForce * input.brake;
-      } else {
-        const reversePower = clamp(1 - Math.abs(forwardSpeed) / 10, 0, 1);
-        engineForce = -config.maxEngineForceRear * config.reverseForceFraction * input.brake * reversePower;
-      }
-    } else if (input.throttle > 0) {
-      if (forwardSpeed < -0.5) {
-        brakeAll = config.maxBrakeForce * input.throttle;
-      } else {
-        const powerFactor = Math.max(0, 1 - clamp(forwardSpeed / config.topSpeedMs, 0, 1));
-        engineForce = config.maxEngineForceRear * input.throttle * powerFactor;
-      }
-    } else {
-      brakeAll = config.rollingResistance;
-    }
-
-    for (const i of REAR_WHEELS) {
-      this.controller.setWheelEngineForce(i, engineForce);
-    }
-    for (const i of FRONT_WHEELS) {
-      this.controller.setWheelEngineForce(i, 0);
-    }
-    for (let i = 0; i < 4; i++) this.controller.setWheelBrake(i, brakeAll);
-
-    if (input.handbrake) {
-      for (const i of REAR_WHEELS) this.controller.setWheelBrake(i, config.handbrakeForce);
-    }
-
     // --- per-wheel arcade tire grip curve ---
     const com = this.body.worldCom();
     const comVec = new THREE.Vector3(com.x, com.y, com.z);
     let maxRearSlip = 0;
+    let grounded = false;
     for (let i = 0; i < 4; i++) {
       const isFront = i === WHEEL_FL || i === WHEEL_FR;
       const steer = isFront ? this.currentSteerAngle : 0;
@@ -200,26 +273,135 @@ export class Vehicle {
 
       const isRear = i === WHEEL_RL || i === WHEEL_RR;
       const handbrakeMul = isRear && input.handbrake ? config.handbrakeRearFrictionMultiplier : 1;
-      this.controller.setWheelSideFrictionStiffness(i, config.baseSideFrictionStiffness * gripMultiplier * handbrakeMul);
+      const axleFriction = isRear ? config.tireFrictionRear : config.tireFrictionFront;
+      // Friction coefficient, not constraint stiffness: this caps how much lateral force the
+      // tyre can make, so exceeding it lets the wheel slide progressively instead of the
+      // all-or-nothing behaviour the stiffness parameter gives.
+      this.controller.setWheelFrictionSlip(i, axleFriction * gripMultiplier * handbrakeMul);
 
       if (isRear) maxRearSlip = Math.max(maxRearSlip, Math.abs(slipAngle));
+
+      const wheelGrounded = this.controller.wheelIsInContact(i);
+      if (wheelGrounded) grounded = true;
+      const state = this.wheelContactStates[i];
+      state.grounded = wheelGrounded;
+      state.slipDeg = Math.max(Math.abs(slipAngle) * (180 / Math.PI), isRear && input.handbrake && speed > 5 ? 24 : 0);
+      const contactPoint = wheelGrounded ? this.controller.wheelContactPoint(i) : null;
+      if (contactPoint) {
+        state.x = contactPoint.x;
+        state.y = contactPoint.y;
+        state.z = contactPoint.z;
+      } else {
+        state.grounded = false;
+      }
     }
 
-    // --- drift-assist yaw torque (arcade helper to make slides controllable) ---
-    const driftThresholdRad = (8 * Math.PI) / 180;
-    if (maxRearSlip > driftThresholdRad && speed > config.driftAssistMinSpeed && Math.abs(input.steer) > 0.05) {
-      this.body.addTorque({ x: 0, y: -input.steer * config.driftAssistTorque, z: 0 }, true);
+    // --- drift scoring, which feeds the boost multiplier the engine reads below ---
+    this.drift.update(dt, maxRearSlip, speed, grounded, input.boost && !input.handbrake && input.brake === 0 && forwardSpeed > -0.5);
+    const driftState = this.drift.state;
+
+    // --- throttle / brake / reverse ---
+    let brakeAll = 0;
+    let throttleCmd = 0;
+    let reverseCmd = false;
+    if (input.brake > 0) {
+      if (forwardSpeed > 0.5 || input.throttle > 0) {
+        brakeAll = config.maxBrakeForce * input.brake;
+      } else {
+        reverseCmd = true;
+        throttleCmd = input.brake;
+      }
+    } else if (input.throttle > 0 || driftState.boosting) {
+      if (forwardSpeed < -0.5) brakeAll = config.maxBrakeForce * input.throttle;
+      else throttleCmd = driftState.boosting ? 1 : input.throttle;
+    } else {
+      brakeAll = config.rollingResistance;
     }
+
+    const engineForce = this.drivetrain.update(dt, forwardSpeed, throttleCmd, reverseCmd, driftState.boostMultiplier);
+    // Rapier applies the value per wheel, so split the axle's total between the driven pair.
+    const perWheelForce = engineForce / REAR_WHEELS.length;
+    for (const i of REAR_WHEELS) this.controller.setWheelEngineForce(i, perWheelForce);
+    for (const i of FRONT_WHEELS) this.controller.setWheelEngineForce(i, 0);
+    for (let i = 0; i < 4; i++) this.controller.setWheelBrake(i, brakeAll);
+
+    if (input.handbrake) {
+      for (const i of REAR_WHEELS) this.controller.setWheelBrake(i, config.handbrakeForce);
+    }
+
+    if (driftState.boosting) {
+      const thrust = config.chassisMass * 8;
+      this.body.addForce({ x: forward.x * thrust, y: 0, z: forward.z * thrust }, true);
+    }
+    // --- aerodynamic drag: what actually sets top speed now that gearing sets the drive force ---
+    if (speed > 0.1) {
+      const dragMagnitude = config.aeroDragCoefficient * speed * speed;
+      this.body.addForce(
+        { x: (-linvelVec.x / speed) * dragMagnitude, y: 0, z: (-linvelVec.z / speed) * dragMagnitude },
+        true
+      );
+    }
+
+    // --- drift handling aids ---
+    // How far into a slide the car is; every aid below fades in with it so grip driving is untouched.
+    const rearSlipDeg = (maxRearSlip * 180) / Math.PI;
+    const driftBlend = smoothstep(config.drift.exitSlipDeg * 0.6, config.drift.entrySlipDeg * 1.5, rearSlipDeg);
+    const speedGate = smoothstep(config.driftAssistMinSpeed * 0.5, config.driftAssistMinSpeed, speed);
+    const wheelBase = config.wheelBaseFront - config.wheelBaseRear;
+    let assistTorque = 0;
+
+    if (driftBlend > 0 && speedGate > 0) {
+      // Bicycle-model yaw rate the steering angle is asking for, versus what the car is doing.
+      // Driving the error to zero lets the driver hold an angle instead of fighting the slide,
+      // and it self-corrects on counter-steer because the requested rate flips sign with it.
+      //
+      // The request is capped at the rotation the tyres can actually hold at this speed
+      // (a = v * yawRate must stay within mu * g). Without that cap the geometric request runs
+      // far past the grip limit at speed and the assist torques the car into a spin.
+      const gripYawRate = (config.tireFrictionRear * 9.81 * config.yawAssistGripMargin) / Math.max(6, speed);
+      const yawLimit = Math.min(config.maxAssistYawRate, gripYawRate);
+      const desiredYawRate = clamp((forwardSpeed / wheelBase) * Math.tan(this.currentSteerAngle), -yawLimit, yawLimit);
+      const yawError = desiredYawRate - angvel.y;
+      assistTorque =
+        clamp(yawError * config.yawAssistGain, -config.maxYawAssistTorque, config.maxYawAssistTorque) *
+        driftBlend *
+        speedGate;
+
+      // Sliding sideways otherwise scrubs off all the entry speed; feed a little of it back along
+      // the heading so a held drift stays quick enough to be worth taking.
+      if (forwardSpeed > 1) {
+        const scrub = Math.abs(linvelVec.dot(right));
+        const thrust = Math.min(scrub * config.driftThrustPerScrub, config.maxDriftThrust) * driftBlend;
+        this.body.addForce({ x: forward.x * thrust, y: 0, z: forward.z * thrust }, true);
+      }
+    }
+
+    // Spin protection stays active even outside a drift, so a hit or a bad kerb cannot pirouette.
+    const spinExcess = Math.abs(angvel.y) - config.spinYawRateLimit;
+    if (spinExcess > 0) assistTorque -= Math.sign(angvel.y) * spinExcess * config.spinDampGain;
+    if (assistTorque !== 0) this.body.addTorque({ x: 0, y: assistTorque, z: 0 }, true);
+
+    this.applyWallResponse();
+    this.previousVelocityX = linvel.x;
+    this.previousVelocityZ = linvel.z;
 
     this.controller.updateVehicle(dt, undefined, undefined, this.queryFilterPredicate);
     this.brakeLightsOn = brakeAll > config.rollingResistance + 0.01 || input.handbrake;
 
+    this.exhaust.update(dt, driftState.boosting);
     this.lastTelemetry = {
       speedKmh: Math.abs(forwardSpeed) * 3.6,
       forwardSpeedMs: forwardSpeed,
-      isDrifting: maxRearSlip > driftThresholdRad && speed > 4,
-      maxSlipDeg: (maxRearSlip * 180) / Math.PI,
-      gear: forwardSpeed > 0.5 ? "D" : forwardSpeed < -0.5 ? "R" : "N",
+      isDrifting: driftState.active,
+      maxSlipDeg: rearSlipDeg,
+      gear: this.drivetrain.gearLabel,
+      rpm: this.drivetrain.rpm,
+      rpmFraction: this.drivetrain.rpmFraction,
+      driftScore: driftState.score,
+      driftChain: driftState.chain,
+      driftScoreTotal: driftState.bankedScore,
+      boostRemainingSec: driftState.boostRemainingSec,
+      boosting: driftState.boosting,
     };
   }
 
@@ -255,6 +437,10 @@ export class Vehicle {
     return this.lastTelemetry;
   }
 
+  get wheelContacts(): readonly WheelContactState[] {
+    return this.wheelContactStates;
+  }
+
   position(): THREE.Vector3 {
     const t = this.body.translation();
     return new THREE.Vector3(t.x, t.y, t.z);
@@ -274,6 +460,11 @@ export class Vehicle {
     return new THREE.Vector3(v.x, v.y, v.z);
   }
 
+  /** Yaw rate about world +Y in rad/s; positive turns the car left. */
+  yawRate(): number {
+    return this.body.angvel().y;
+  }
+
   resetTo(position: THREE.Vector3, yawRad: number): void {
     this.body.setTranslation({ x: position.x, y: position.y + this.config.spawnHeight, z: position.z }, true);
     this.body.setRotation({ x: 0, y: Math.sin(yawRad / 2), z: 0, w: Math.cos(yawRad / 2) }, true);
@@ -283,11 +474,18 @@ export class Vehicle {
     this.body.resetTorques(true);
     this.currentSteerAngle = 0;
     this.brakeLightsOn = false;
+    this.touchingWall = false;
+    this.pendingImpact = 0;
+    this.previousVelocityX = 0;
+    this.previousVelocityZ = 0;
+    this.drivetrain.reset();
+    this.drift.reset();
+    this.exhaust.update(0, false);
     for (let i = 0; i < 4; i++) {
       this.controller.setWheelSteering(i, 0);
       this.controller.setWheelEngineForce(i, 0);
       this.controller.setWheelBrake(i, 0);
     }
-    this.lastTelemetry = { speedKmh: 0, forwardSpeedMs: 0, isDrifting: false, maxSlipDeg: 0, gear: "N" };
+    this.lastTelemetry = { ...IDLE_TELEMETRY, boostRemainingSec: this.drift.state.boostRemainingSec };
   }
 }

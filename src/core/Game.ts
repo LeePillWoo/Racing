@@ -10,8 +10,12 @@ import { DEFAULT_VEHICLE_CONFIG } from "../vehicle/VehicleConfig";
 import { ChaseCamera } from "../camera/ChaseCamera";
 import { RaceManager, Racer } from "../race/RaceManager";
 import { AIController, randomAIPersonality } from "../ai/AIController";
+import { RacingLine } from "../ai/RacingLine";
 import { HUD } from "../ui/HUD";
 import { PostProcessing } from "./PostProcessing";
+import { SkidMarks } from "../vfx/SkidMarks";
+import { TireSmoke } from "../vfx/TireSmoke";
+import { createSoftDotTexture } from "../utils/Textures";
 
 const TOTAL_LAPS = 3;
 const AI_NAMES = ["FALCON", "VIPER", "SCORPION", "MIRAGE", "COMET", "NOVA", "ATLAS", "BLAZE", "ORION", "VERTEX", "PULSE"];
@@ -25,8 +29,13 @@ export class Game {
   private readonly input = new InputManager();
   private readonly chaseCamera: ChaseCamera;
   private readonly postFX: PostProcessing;
+  private readonly skidMarks = new SkidMarks();
+  private readonly tireSmoke = new TireSmoke(createSoftDotTexture());
+  /** Rationing: one puff per emitter per interval keeps the pool from being flooded by 12 cars. */
+  private smokeCooldown = 0;
   private physics!: PhysicsWorld;
   private path!: TrackPath;
+  private racingLine!: RacingLine;
   private environment!: EnvironmentHandles;
   private raceManager!: RaceManager;
   private hud!: HUD;
@@ -79,7 +88,10 @@ export class Game {
     this.physics = new PhysicsWorld(rapier);
     onProgress(0.25, "그랑프리 서킷 생성 중");
     this.path = new TrackPath();
+    this.racingLine = new RacingLine(this.path);
     this.scene.add(buildRoadMesh(this.path));
+    this.scene.add(this.skidMarks.mesh);
+    this.scene.add(this.tireSmoke.points);
     buildGroundCollider(rapier, this.physics.world, this.path);
     onProgress(0.45, "관중석과 서킷 환경 구성 중");
     this.environment = buildEnvironment(this.scene, this.path);
@@ -93,12 +105,12 @@ export class Game {
       const slot = grid[i], color = AI_COLORS[i];
       const vehicle = new Vehicle(rapier, this.physics.world, this.scene, slot.position, slot.yawRad, color);
       const racer = this.raceManager.addRacer("ai-" + i, AI_NAMES[i], false, vehicle, color);
-      const controller = new AIController(this.path, racer, randomAIPersonality(i + 1), this.playerRacer,
-        r => this.raceManager.resetRacerToTrack(r));
+      const controller = new AIController(this.path, this.racingLine, racer, randomAIPersonality(i + 1),
+        this.raceManager.racers, r => this.raceManager.resetRacerToTrack(r));
       this.aiEntries.push({ vehicle, racer, controller });
     }
     // Settle suspension before showing the grid; no race time elapses here.
-    const idle = { throttle: 0, brake: 0, steer: 0, handbrake: true, resetRequested: false, cameraToggleRequested: false };
+    const idle = { throttle: 0, brake: 0, steer: 0, handbrake: true, boost: false, resetRequested: false, cameraToggleRequested: false };
     for (let i = 0; i < 100; i++) this.physics.step(1 / 120, dt => {
       this.playerVehicle.physicsStep(dt, idle);
       this.aiEntries.forEach(entry => entry.vehicle.physicsStep(dt, idle));
@@ -183,8 +195,11 @@ export class Game {
     });
     this.playerVehicle.syncVisuals();
     this.aiEntries.forEach(entry => entry.vehicle.syncVisuals());
+    this.updateTireEffects(dt);
     this.raceManager.update(simulatedDt * 1000);
     this.environment.followSun(this.playerVehicle.position());
+    const impact = this.playerVehicle.consumeImpact();
+    if (impact > 3) this.chaseCamera.triggerImpactShake(Math.min(0.55, impact * 0.03));
     this.chaseCamera.update(dt, this.playerVehicle);
     this.updateHUD(dt);
     if (this.raceManager.isRaceOver) {
@@ -194,10 +209,42 @@ export class Game {
     }
   }
 
+  /**
+   * Lays rubber and puffs smoke wherever a tyre is sliding. Driven off the same slip angle the
+   * physics uses, so what you see on the road is what the car is actually doing.
+   */
+  private updateTireEffects(dt: number): void {
+    const SLIP_START = 9;
+    const SLIP_FULL = 34;
+    this.smokeCooldown -= dt;
+    const puffReady = this.smokeCooldown <= 0;
+    if (puffReady) this.smokeCooldown = 0.022;
+
+    let emitter = 0;
+    for (const vehicle of [this.playerVehicle, ...this.aiEntries.map(entry => entry.vehicle)]) {
+      for (const wheel of vehicle.wheelContacts) {
+        const key = emitter++;
+        if (!wheel.grounded || wheel.slipDeg < SLIP_START) { this.skidMarks.breakTrail(key); continue; }
+        const strength = Math.min(1, (wheel.slipDeg - SLIP_START) / (SLIP_FULL - SLIP_START));
+        this.skidMarks.emit(key, wheel.x, wheel.z, 0.22, strength);
+        // Only the sliding rear tyres smoke, and only on the rationed frames.
+        if (puffReady && wheel.isRear && strength > 0.15) {
+          this.tireSmoke.spawn(wheel.x, wheel.y, wheel.z, strength);
+        }
+      }
+    }
+    this.skidMarks.update(dt);
+    this.tireSmoke.update(dt);
+  }
+
   private updateHUD(dt: number): void {
+    const telemetry = this.playerVehicle.telemetry;
     this.hud.update({
-      speedKmh: this.playerVehicle.telemetry.speedKmh, gear: this.playerVehicle.telemetry.gear,
-      isDrifting: this.playerVehicle.telemetry.isDrifting,
+      speedKmh: telemetry.speedKmh, gear: telemetry.gear, rpmFraction: telemetry.rpmFraction,
+      isDrifting: telemetry.isDrifting, driftScore: telemetry.driftScore,
+      driftChain: telemetry.driftChain, driftScoreTotal: telemetry.driftScoreTotal,
+      boostRemainingSec: telemetry.boostRemainingSec, boosting: telemetry.boosting,
+      maxBoostSec: DEFAULT_VEHICLE_CONFIG.drift.maxBoostSec,
       currentLapMs: this.raceManager.currentLapMs(this.playerRacer), bestLapMs: this.playerRacer.bestLapMs,
       lapNumber: this.playerRacer.highestLapFloor, totalLaps: TOTAL_LAPS,
       rank: this.playerRacer.rank, totalRacers: this.raceManager.racers.length,

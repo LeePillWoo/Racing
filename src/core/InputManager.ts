@@ -3,6 +3,7 @@ export interface InputState {
   brake: number;
   steer: number;
   handbrake: boolean;
+  boost: boolean;
   resetRequested: boolean;
   cameraToggleRequested: boolean;
 }
@@ -34,7 +35,7 @@ export class InputManager {
     this.down.add(e.code);
     if (!e.repeat && e.code === "KeyR") this.resetLatch = true;
     if (!e.repeat && e.code === "KeyC") this.cameraLatch = true;
-    if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) e.preventDefault();
+    if (["Space", "ShiftLeft", "ShiftRight", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) e.preventDefault();
   };
   private onKeyUp = (e: KeyboardEvent): void => { this.down.delete(e.code); };
 
@@ -53,6 +54,7 @@ export class InputManager {
       brake: this.pressed("KeyS", "ArrowDown") ? 1 : 0,
       steer: Number(this.pressed("KeyD", "ArrowRight")) - Number(this.pressed("KeyA", "ArrowLeft")),
       handbrake: this.pressed("Space"),
+      boost: this.pressed("ShiftLeft", "ShiftRight"),
       resetRequested: this.resetLatch, cameraToggleRequested: this.cameraLatch,
     };
     this.resetLatch = false; this.cameraLatch = false;

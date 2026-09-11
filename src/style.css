@@ -64,8 +64,20 @@ body:has(.finish-overlay) .hud-layer{opacity:1}
 .speedo-value{font-size:43px;line-height:1;font-weight:800;font-style:italic}
 .speedo-unit{font-size:9px;letter-spacing:2px;opacity:.6;margin-top:5px}
 .speedo-gear{position:absolute;bottom:25px;font-size:12px;color:#e5f34b;font-weight:800}
-.drift-indicator{position:absolute;bottom:210px;right:58px;color:#e5f34b;font-size:12px;font-weight:900;letter-spacing:3px;opacity:0}
+.speedo-stack{display:flex;flex-direction:column;align-items:center;gap:7px}
+.tach{width:150px;height:7px;background:#0c1c2dcc;border:1px solid #e4f2ff20;border-radius:4px;overflow:hidden}
+.tach-fill{height:100%;width:0;background:linear-gradient(90deg,#32bfe5,#e5f34b 60%,#ff5a3c 90%)}
+.tach.redline{border-color:#ff5a3c;box-shadow:0 0 9px #ff5a3c66}
+.drift-stack{position:absolute;bottom:214px;right:58px;display:flex;flex-direction:column;align-items:flex-end;gap:4px;pointer-events:none}
+.drift-indicator{text-align:right;color:#e5f34b;opacity:0;transition:opacity .12s}
 .drift-indicator.active{opacity:1}
+.drift-headline{font-size:12px;font-weight:900;letter-spacing:3px}
+.drift-score{font-size:26px;font-weight:900;font-style:italic;line-height:1.1}
+.drift-total{font-size:9px;letter-spacing:1.5px;color:#b7c8d6;opacity:0}
+.drift-total.visible{opacity:1}
+.boost-bar{width:132px;height:5px;background:#0c1c2dcc;border:1px solid #e4f2ff20;border-radius:3px;overflow:hidden;opacity:.45}
+.boost-bar.active{opacity:1;border-color:#ff9a3c;box-shadow:0 0 10px #ff9a3c55}
+.boost-fill{height:100%;width:0;background:linear-gradient(90deg,#ff9a3c,#ffe45e)}
 .fps-counter{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);font-size:9px;color:#fff8}
 .race-actions{display:none;position:absolute;top:27px;right:28px;gap:8px}
 .racing .race-actions{display:flex}
@@ -92,8 +104,13 @@ body:has(.finish-overlay) .hud-layer{opacity:1}
 .hud-lapcount{top:20px;padding:9px 11px;font-size:10px;letter-spacing:1px}
 .hud-standings{right:14px;top:70px;min-width:113px}.standing-row{font-size:8px;padding:3px}
 .hud-bottom-right{left:14px;right:14px;bottom:22px}.minimap-wrap{width:110px;height:110px}.speedo{width:135px;height:135px}
+.tach{width:122px}.drift-stack{bottom:180px;right:16px}.boost-bar{width:110px}.drift-score{font-size:20px}
 .speedo-value{font-size:34px}.speedo-gear{bottom:19px}.race-actions{top:18px;right:14px}
 .race-actions button{padding:8px}.race-actions #reset-button{display:none}
 }
-@media(pointer:coarse){.racing .touch-controls{display:flex}.hud-bottom-right{bottom:90px}.drift-indicator{bottom:245px}}
+@media(pointer:coarse){.racing .touch-controls{display:flex}.hud-bottom-right{bottom:90px}.drift-stack{bottom:248px}}
 @media(max-height:600px){.start-card h1{font-size:54px;margin:18px 0}.race-specs{margin:16px 0}.controls-help{gap:5px;margin-top:12px}.start-description{margin:8px 0}.start-footer{display:none}.hud-standings .standing-row:nth-child(n+7){display:none}}
+
+.boost-label{font-size:10px;color:#ffcc83;letter-spacing:1px;margin-bottom:5px}
+.touch-controls button[data-control="ShiftLeft"]{background:#ed7832;color:#fff}
+@media(max-width:420px){.touch-controls{left:8px;right:8px}.touch-controls>div{gap:4px}.touch-controls button{min-width:44px}}

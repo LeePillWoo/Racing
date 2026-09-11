@@ -6,8 +6,15 @@ import { msToClock } from "../utils/MathUtils";
 
 export interface HUDUpdateData {
   speedKmh: number;
-  gear: "R" | "N" | "D";
+  gear: string;
+  rpmFraction: number;
   isDrifting: boolean;
+  driftScore: number;
+  driftChain: number;
+  driftScoreTotal: number;
+  boostRemainingSec: number;
+  maxBoostSec: number;
+  boosting: boolean;
   currentLapMs: number;
   bestLapMs: number | null;
   lapNumber: number;
@@ -30,6 +37,13 @@ export class HUD {
   private readonly positionEl: HTMLElement;
   private readonly standingsEl: HTMLElement;
   private readonly driftEl: HTMLElement;
+  private readonly driftChainEl: HTMLElement;
+  private readonly driftScoreEl: HTMLElement;
+  private readonly driftTotalEl: HTMLElement;
+  private readonly boostEl: HTMLElement;
+  private readonly boostFillEl: HTMLElement;
+  private readonly tachEl: HTMLElement;
+  private readonly tachFillEl: HTMLElement;
   private readonly fpsEl: HTMLElement;
   private standingsSignature = "";
   private finishOverlay: HTMLElement | null = null;
@@ -52,14 +66,25 @@ export class HUD {
         <div data-el="standings"></div>
       </div>
       <div class="hud-panel hud-position" data-el="position">1<span style="font-size:0.9rem;opacity:0.6"> / 6</span></div>
-      <div class="drift-indicator" data-el="drift">DRIFT!</div>
+      <div class="drift-stack">
+        <div class="drift-indicator" data-el="drift">
+          <div class="drift-headline">DRIFT <span data-el="driftchain">x1</span></div>
+          <div class="drift-score" data-el="driftscore">0</div>
+        </div>
+        <div class="drift-total" data-el="drifttotal">TOTAL 0</div>
+        <div class="boost-label">SHIFT / BOOST</div>
+        <div class="boost-bar" data-el="boost"><div class="boost-fill" data-el="boostfill"></div></div>
+      </div>
       <div class="hud-bottom-right">
         <div class="minimap-wrap" data-el="minimap-slot"></div>
-        <div class="speedo" data-el="speedo-slot">
-          <div class="speedo-readout">
-            <div class="speedo-value" data-el="speedval">0</div>
-            <div class="speedo-unit">KM/H</div>
-            <div class="speedo-gear" data-el="gear">D</div>
+        <div class="speedo-stack">
+          <div class="tach" data-el="tach"><div class="tach-fill" data-el="tachfill"></div></div>
+          <div class="speedo" data-el="speedo-slot">
+            <div class="speedo-readout">
+              <div class="speedo-value" data-el="speedval">0</div>
+              <div class="speedo-unit">KM/H</div>
+              <div class="speedo-gear" data-el="gear">N</div>
+            </div>
           </div>
         </div>
       </div>
@@ -79,6 +104,13 @@ export class HUD {
     this.positionEl = this.root.querySelector('[data-el="position"]')!;
     this.standingsEl = this.root.querySelector('[data-el="standings"]')!;
     this.driftEl = this.root.querySelector('[data-el="drift"]')!;
+    this.driftChainEl = this.root.querySelector('[data-el="driftchain"]')!;
+    this.driftScoreEl = this.root.querySelector('[data-el="driftscore"]')!;
+    this.driftTotalEl = this.root.querySelector('[data-el="drifttotal"]')!;
+    this.boostEl = this.root.querySelector('[data-el="boost"]')!;
+    this.boostFillEl = this.root.querySelector('[data-el="boostfill"]')!;
+    this.tachEl = this.root.querySelector('[data-el="tach"]')!;
+    this.tachFillEl = this.root.querySelector('[data-el="tachfill"]')!;
     this.fpsEl = this.root.querySelector('[data-el="fps"]')!;
   }
 
@@ -87,6 +119,9 @@ export class HUD {
     this.speedValueEl.textContent = Math.round(this.speedo.value).toString();
     this.gearEl.textContent = data.gear;
 
+    this.tachFillEl.style.width = `${Math.round(data.rpmFraction * 100)}%`;
+    this.tachEl.classList.toggle("redline", data.rpmFraction > 0.92);
+
     this.lapTimeEl.textContent = msToClock(data.currentLapMs);
     this.bestLapEl.textContent = data.bestLapMs !== null ? `BEST ${msToClock(data.bestLapMs)}` : "BEST --:--.---";
     this.lapCountEl.textContent = `LAP ${Math.min(data.lapNumber + 1, data.totalLaps)} / ${data.totalLaps}`;
@@ -94,6 +129,16 @@ export class HUD {
     this.positionEl.innerHTML = `${data.rank}<span style="font-size:0.9rem;opacity:0.6"> / ${data.totalRacers}</span>`;
 
     this.driftEl.classList.toggle("active", data.isDrifting);
+    if (data.isDrifting) {
+      this.driftChainEl.textContent = `x${data.driftChain}`;
+      this.driftScoreEl.textContent = Math.round(data.driftScore).toString();
+    }
+    this.driftTotalEl.textContent = `TOTAL ${Math.round(data.driftScoreTotal)}`;
+    this.driftTotalEl.classList.toggle("visible", data.driftScoreTotal > 0);
+
+    const boostFraction = data.maxBoostSec > 0 ? data.boostRemainingSec / data.maxBoostSec : 0;
+    this.boostEl.classList.toggle("active", data.boosting);
+    this.boostFillEl.style.width = `${Math.round(Math.min(1, boostFraction) * 100)}%`;
 
     const signature = data.standings.map(r => r.id + ":" + r.rank).join("|");
     if (signature !== this.standingsSignature) {
