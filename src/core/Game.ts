@@ -16,6 +16,7 @@ import { HUD } from "../ui/HUD";
 import { PostProcessing } from "./PostProcessing";
 import { SkidMarks } from "../vfx/SkidMarks";
 import { TireSmoke } from "../vfx/TireSmoke";
+import { Debris } from "../vfx/Debris";
 import { createSoftDotTexture } from "../utils/Textures";
 
 const AI_NAMES = ["FALCON", "VIPER", "SCORPION", "MIRAGE", "COMET", "NOVA", "ATLAS", "BLAZE", "ORION", "VERTEX", "PULSE"];
@@ -31,6 +32,9 @@ export class Game {
   private readonly postFX: PostProcessing;
   private readonly skidMarks = new SkidMarks();
   private readonly tireSmoke = new TireSmoke(createSoftDotTexture());
+  private readonly debris = new Debris();
+  /** Varies the throw of each broken part without a random source the replay cannot reproduce. */
+  private debrisSeed = 0;
   /** Rationing: one puff per emitter per interval keeps the pool from being flooded by 12 cars. */
   private smokeCooldown = 0;
   private physics!: PhysicsWorld;
@@ -70,6 +74,7 @@ export class Game {
     document.addEventListener("visibilitychange", () => { if (document.hidden) this.setPaused(true); });
     document.getElementById("resume-button")!.addEventListener("click", () => this.setPaused(false));
     document.getElementById("pause-button")!.addEventListener("click", () => this.setPaused(true));
+    document.getElementById("menu-button")!.addEventListener("click", () => location.reload());
     document.getElementById("reset-button")!.addEventListener("click", () => {
       if (this.started && !this.paused && !this.raceFinishedShown) this.resetPlayer();
     });
@@ -93,6 +98,7 @@ export class Game {
     this.scene.add(buildRoadMesh(this.path));
     this.scene.add(this.skidMarks.mesh);
     this.scene.add(this.tireSmoke.points);
+    this.scene.add(this.debris.group);
     buildGroundCollider(rapier, this.physics.world, this.path);
     onProgress(0.45, "관중석과 서킷 환경 구성 중");
     this.environment = buildEnvironment(this.scene, this.path);
@@ -197,6 +203,7 @@ export class Game {
     this.playerVehicle.syncVisuals();
     this.aiEntries.forEach(entry => entry.vehicle.syncVisuals());
     this.updateTireEffects(dt);
+    this.collectDebris(dt);
     this.raceManager.update(simulatedDt * 1000);
     this.environment.followSun(this.playerVehicle.position());
     const impact = this.playerVehicle.consumeImpact();
@@ -208,6 +215,16 @@ export class Game {
       document.body.classList.remove("racing");
       this.hud.showFinish([...this.raceManager.racers].sort((a, b) => a.rank - b.rank));
     }
+  }
+
+  /** Moves parts that have just come off any car onto the debris pile, and ages what is there. */
+  private collectDebris(dt: number): void {
+    for (const vehicle of [this.playerVehicle, ...this.aiEntries.map(entry => entry.vehicle)]) {
+      for (const broken of vehicle.consumeBrokenParts()) {
+        this.debris.spawn(broken.object, vehicle.linearVelocity(), ++this.debrisSeed);
+      }
+    }
+    this.debris.update(dt);
   }
 
   /**

@@ -6,3 +6,4 @@ dist/
 artifacts/
 before.png
 .claude/
+.vscode/

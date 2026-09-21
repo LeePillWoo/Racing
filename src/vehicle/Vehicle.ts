@@ -6,6 +6,7 @@ import { Drivetrain } from "./Drivetrain";
 import { DriftSystem } from "./DriftSystem";
 import { findWallContact } from "./WallBounce";
 import { buildCarMesh, CarMeshSet } from "./CarMesh";
+import { BROKEN_WHEEL_GRIP, BROKEN_WING_GRIP, CarPart, DamageModel, WHEEL_PARTS } from "./Damage";
 import { clamp, damp, lerp, smoothstep } from "../utils/MathUtils";
 import type { InputState } from "../core/InputManager";
 
@@ -46,13 +47,22 @@ export interface VehicleTelemetry {
   driftScoreTotal: number;
   boostRemainingSec: number;
   boosting: boolean;
+  /** Worst corner damage, 0 = pristine, 1 = that corner has lost its wheel. */
+  damage: number;
+  brokenParts: number;
 }
 
 const IDLE_TELEMETRY: VehicleTelemetry = {
   speedKmh: 0, forwardSpeedMs: 0, isDrifting: false, maxSlipDeg: 0, gear: "N",
   rpm: 0, rpmFraction: 0, driftScore: 0, driftChain: 1, driftScoreTotal: 0,
-  boostRemainingSec: 0, boosting: false,
+  boostRemainingSec: 0, boosting: false, damage: 0, brokenParts: 0,
 };
+
+/** A part that has left the car, handed to the caller so it can be thrown on the debris pile. */
+export interface BrokenPart {
+  part: CarPart;
+  object: THREE.Object3D;
+}
 
 export class Vehicle {
   readonly config: VehicleConfig;
@@ -90,6 +100,10 @@ export class Vehicle {
   private readonly wheelSpin = [0, 0, 0, 0];
   private readonly previousWheelSpin = [0, 0, 0, 0];
   private lastTelemetry: VehicleTelemetry = { ...IDLE_TELEMETRY };
+  readonly damage = new DamageModel();
+  /** Breaks registered by the physics step, turned into loose meshes on the next syncVisuals. */
+  private readonly pendingBreaks: CarPart[] = [];
+  private readonly detachedParts: BrokenPart[] = [];
 
   constructor(
     rapier: typeof RAPIER,
@@ -233,6 +247,12 @@ export class Vehicle {
     // Rapier retains user forces/torques until explicitly cleared.
     this.body.resetForces(false);
     this.body.resetTorques(false);
+    // Read before applyWallResponse so the damage sees the solver's own verdict on the crash and
+    // not the arcade rebound this class adds on top of it.
+    const incoming = this.body.linvel();
+    const deltaVx = incoming.x - this.previousVelocityX;
+    const deltaVz = incoming.z - this.previousVelocityZ;
+    const speedLost = Math.hypot(this.previousVelocityX, this.previousVelocityZ) - Math.hypot(incoming.x, incoming.z);
     this.wallRecoveryTime = Math.max(0, this.wallRecoveryTime - dt);
     this.applyWallResponse();
     if (this.wallRecoveryTime > 0) {
@@ -248,6 +268,10 @@ export class Vehicle {
     const linvelVec = new THREE.Vector3(linvel.x, linvel.y, linvel.z);
     const forwardSpeed = linvelVec.dot(forward);
     const speed = linvelVec.length();
+    // A crash is a step where the chassis loses a large chunk of velocity at once. Braking and
+    // cornering move it by a fraction of a m/s per step, so nothing short of a real impact registers.
+    this.pendingBreaks.push(...this.damage.register(deltaVx, deltaVz, speedLost, forward, right, this.lastTelemetry.boosting));
+
     const noseIntoWall = -(forward.x * this.wallNormalX + forward.z * this.wallNormalZ);
     const wallDriveScale = this.wallRecoveryTime > 0 ? 1 - smoothstep(0.1, 0.7, noseIntoWall) : 1;
 
@@ -294,7 +318,9 @@ export class Vehicle {
       // Friction coefficient, not constraint stiffness: this caps how much lateral force the
       // tyre can make, so exceeding it lets the wheel slide progressively instead of the
       // all-or-nothing behaviour the stiffness parameter gives.
-      this.controller.setWheelFrictionSlip(i, axleFriction * gripMultiplier * handbrakeMul);
+      const wingLoss = this.damage.has(isFront ? "front-wing" : "rear-wing") ? BROKEN_WING_GRIP : 1;
+      const hubLoss = this.damage.has(WHEEL_PARTS[i]) ? BROKEN_WHEEL_GRIP : 1;
+      this.controller.setWheelFrictionSlip(i, axleFriction * gripMultiplier * handbrakeMul * wingLoss * hubLoss);
 
       if (isRear) maxRearSlip = Math.max(maxRearSlip, Math.abs(slipAngle));
 
@@ -340,7 +366,9 @@ export class Vehicle {
     const engineForce = this.drivetrain.update(dt, forwardSpeed, throttleCmd, reverseCmd, driftState.boostMultiplier);
     // Rapier applies the value per wheel, so split the axle's total between the driven pair.
     const perWheelForce = engineForce / REAR_WHEELS.length;
-    for (const i of REAR_WHEELS) this.controller.setWheelEngineForce(i, perWheelForce);
+    for (const i of REAR_WHEELS) {
+      this.controller.setWheelEngineForce(i, this.damage.has(WHEEL_PARTS[i]) ? 0 : perWheelForce);
+    }
     for (const i of FRONT_WHEELS) this.controller.setWheelEngineForce(i, 0);
     for (let i = 0; i < 4; i++) this.controller.setWheelBrake(i, brakeAll);
 
@@ -447,7 +475,41 @@ export class Vehicle {
       driftScoreTotal: driftState.bankedScore,
       boostRemainingSec: driftState.boostRemainingSec,
       boosting: driftState.boosting,
+      damage: Math.min(1, this.damage.worstCorner),
+      brokenParts: this.damage.broken.size,
     };
+  }
+
+  /**
+   * Cuts a part loose, leaving it standing exactly where it was in world space so the debris
+   * system can take it from there. Done here rather than in the physics step because the chassis
+   * transform is only current once the visuals have been synced.
+   */
+  private detachPart(part: CarPart, object: THREE.Object3D): void {
+    object.updateWorldMatrix(true, false);
+    // The loose piece is a clone standing at the part's world transform, and the original is
+    // merely hidden. Cloning shares the geometry and materials, so it costs almost nothing, and
+    // it means a reset can put the car back together by making the originals visible again.
+    const loose = object.clone();
+    object.matrixWorld.decompose(loose.position, loose.quaternion, loose.scale);
+    object.visible = false;
+    this.detachedParts.push({ part, object: loose });
+  }
+
+  /** Puts every broken part back on the car and clears the damage. */
+  repair(): void {
+    this.damage.reset();
+    this.pendingBreaks.length = 0;
+    this.detachedParts.length = 0;
+    this.meshes.frontWing.visible = true;
+    this.meshes.rearWing.visible = true;
+    for (const wheel of this.meshes.wheels) wheel.visible = true;
+  }
+
+  /** Parts that have come off since the last call. The caller owns the meshes it is handed. */
+  consumeBrokenParts(): BrokenPart[] {
+    if (this.detachedParts.length === 0) return [];
+    return this.detachedParts.splice(0, this.detachedParts.length);
   }
 
   /** Syncs the three.js meshes to the latest physics state. Call once per render frame (after physics steps). */
@@ -463,6 +525,7 @@ export class Vehicle {
     this.meshes.root.quaternion.multiply(tilt);
 
     for (let i = 0; i < 4; i++) {
+      if (this.damage.has(WHEEL_PARTS[i]) && !this.pendingBreaks.includes(WHEEL_PARTS[i])) continue;
       const local = this.wheelLocal[i];
       const susLength = this.controller.wheelSuspensionLength(i) ?? this.config.suspensionRestLength;
       const wheelMesh = this.meshes.wheels[i];
@@ -478,6 +541,15 @@ export class Vehicle {
     for (const bl of this.meshes.brakeLights) {
       const mat = bl.material as THREE.MeshStandardMaterial;
       mat.emissiveIntensity = this.brakeLightsOn ? 9 : 0.15;
+    }
+
+    // Break parts off after the chassis has been placed, so each one starts from the right spot.
+    while (this.pendingBreaks.length) {
+      const part = this.pendingBreaks.shift()!;
+      const index = WHEEL_PARTS.indexOf(part);
+      if (index >= 0) this.detachPart(part, this.meshes.wheels[index]);
+      else if (part === "front-wing") this.detachPart(part, this.meshes.frontWing);
+      else this.detachPart(part, this.meshes.rearWing);
     }
   }
 
@@ -536,6 +608,7 @@ export class Vehicle {
     this.previousVelocityZ = 0;
     this.drivetrain.reset();
     this.drift.reset();
+    this.repair();
     this.exhaust.update(0, false);
     for (let i = 0; i < 4; i++) {
       this.controller.setWheelSteering(i, 0);

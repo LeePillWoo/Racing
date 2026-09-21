@@ -70,6 +70,42 @@ try {
   assert.ok(await page.evaluate(() => [...window.__racing.skidMarks.mesh.geometry.attributes.color.array].some((a, i) => i % 4 === 3 && a > 0.1)));
   await page.screenshot({ path: "artifacts/drift-desktop.png" });
   await page.keyboard.up("Space"); await page.keyboard.up("KeyD"); await page.keyboard.up("KeyW");
+  // Crash the car into a barrier on purpose and check that parts actually leave it on screen.
+  // Point the car at the barrier, let the suspension settle so it is not launched over the wall,
+  // then fire it in at 150 km/h.
+  await page.evaluate(() => {
+    const g = window.__racing;
+    const frame = g.path.frameAtDistance(200);
+    frame.point.y = 0;
+    window.__crashYaw = Math.atan2(frame.tangent.x, frame.tangent.z) + Math.PI / 2;
+    g.playerVehicle.resetTo(frame.point, window.__crashYaw);
+  });
+  await page.waitForTimeout(700);
+  await page.evaluate(() => {
+    const yaw = window.__crashYaw;
+    window.__racing.playerVehicle.body.setLinvel({ x: Math.sin(yaw) * 42, y: 0, z: Math.cos(yaw) * 42 }, true);
+  });
+  await page.waitForFunction(() => window.__racing.playerVehicle.telemetry.brokenParts > 0, null, { timeout: 15000 });
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: "artifacts/crash-damage.png" });
+  const crash = await page.evaluate(() => ({
+    broken: window.__racing.playerVehicle.telemetry.brokenParts,
+    damage: window.__racing.playerVehicle.telemetry.damage,
+    debris: window.__racing.debris.count,
+    wingVisible: window.__racing.playerVehicle.meshes.frontWing.visible,
+  }));
+  assert.ok(crash.broken > 0, "a 150 km/h barrier hit should break something: " + JSON.stringify(crash));
+  assert.ok(crash.debris > 0, "broken parts must appear as debris in the scene: " + JSON.stringify(crash));
+  assert.equal(crash.wingVisible, false, "a broken front wing must stop being drawn on the car");
+  await page.keyboard.press("KeyR");
+  await page.waitForTimeout(400);
+  const repaired = await page.evaluate(() => ({
+    broken: window.__racing.playerVehicle.telemetry.brokenParts,
+    wingVisible: window.__racing.playerVehicle.meshes.frontWing.visible,
+  }));
+  assert.equal(repaired.broken, 0, "the R recovery must put the car back together");
+  assert.equal(repaired.wingVisible, true);
+
   const diagnostics = await page.evaluate(() => ({
     cars: window.__racing.raceManager.racers.length,
     drawCalls: window.__racing.renderer.info.render.calls,
@@ -139,6 +175,21 @@ try {
     await tour.close();
   }
 
-  console.log(JSON.stringify({ errors, warnings, speed, diagnostics, tours, touch: "passed" }, null, 2));
+  // The pause screen has to offer a way back out of the race.
+  const menuPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  menuPage.on("pageerror", error => errors.push("menu: " + error.message));
+  await menuPage.goto("http://127.0.0.1:5173/");
+  await menuPage.locator("#start-button").click();
+  await menuPage.waitForFunction(() => window.__racing && window.__racing.countdown === 0, null, { timeout: 90000 });
+  await menuPage.locator("#pause-button").click();
+  await menuPage.locator("#menu-button").waitFor({ state: "visible" });
+  await menuPage.locator("#menu-button").click();
+  // The start screen is static markup, so wait for the cards the script builds rather than the button.
+  await menuPage.locator(".track-card").first().waitFor({ state: "visible", timeout: 30000 });
+  assert.equal(await menuPage.locator(".track-card").count(), 3, "leaving a race must land back on the track picker");
+  assert.ok(await menuPage.locator("#start-button").isVisible());
+  await menuPage.close();
+
+  console.log(JSON.stringify({ errors, warnings, speed, crash, diagnostics, tours, menu: "passed", touch: "passed" }, null, 2));
   assert.deepEqual(errors, []);
 } finally { await browser.close(); }

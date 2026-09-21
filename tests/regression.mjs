@@ -686,4 +686,180 @@ for (const layout of layouts.filter(l => l.def.id !== TRACKS[0].id)) {
   trackPhysics.world.free();
 }
 
+// --- crash damage -----------------------------------------------------------------------
+const { DamageModel, DEFAULT_DAMAGE } = await import("../src/vehicle/Damage.ts");
+const FORWARD = new THREE.Vector3(0, 0, 1);
+const RIGHT = new THREE.Vector3(1, 0, 0);
+// A blow arriving from direction d throws the car along -d, which is the deltaV the model reads.
+const hitFrom = (model, dirX, dirZ, speedLost, boosting = false) =>
+  model.register(-dirX * speedLost, -dirZ * speedLost, speedLost, FORWARD, RIGHT, boosting);
+
+check("small knocks and being shoved along do no damage at all", () => {
+  const model = new DamageModel();
+  assert.deepEqual(hitFrom(model, 0, 1, DEFAULT_DAMAGE.minImpactMs - 0.5), []);
+  assert.equal(model.worstCorner, 0);
+  // Gaining speed is an engine or a boost, never a crash, however large the velocity change.
+  assert.deepEqual(model.register(0, 40, -40, FORWARD, RIGHT, false), []);
+  assert.equal(model.worstCorner, 0);
+});
+check("a square hit spreads across an axle and costs the wing, not a wheel", () => {
+  const model = new DamageModel();
+  const broken = hitFrom(model, 0, 1, DEFAULT_DAMAGE.fullImpactMs);
+  assert.ok(Math.abs(model.corners[0] - model.corners[1]) < 1e-9, "both front corners must share it");
+  assert.ok(model.corners[2] === 0 && model.corners[3] === 0, "the rear must be untouched");
+  assert.deepEqual(broken, ["front-wing"], "one square hit takes the wing but leaves the wheels on");
+});
+check("the same hit taken on one corner rips that wheel off", () => {
+  const model = new DamageModel();
+  // Front-left in chassis terms: wheel 0 sits at -X, +Z.
+  const broken = hitFrom(model, -Math.SQRT1_2, Math.SQRT1_2, DEFAULT_DAMAGE.fullImpactMs);
+  assert.ok(broken.includes("wheel-0"), "expected the struck corner to lose its wheel: " + broken);
+  assert.equal(model.corners[1], 0, "the far corner must be untouched");
+  assert.ok(model.has("wheel-0") && !model.has("wheel-3"));
+});
+check("boost turns a survivable shunt into a broken wheel", () => {
+  const speedLost = DEFAULT_DAMAGE.minImpactMs +
+    (DEFAULT_DAMAGE.fullImpactMs - DEFAULT_DAMAGE.minImpactMs) * 0.7;
+  const lifted = new DamageModel();
+  assert.deepEqual(hitFrom(lifted, -Math.SQRT1_2, Math.SQRT1_2, speedLost).filter(p => p.startsWith("wheel")), []);
+  const boosted = new DamageModel();
+  assert.ok(hitFrom(boosted, -Math.SQRT1_2, Math.SQRT1_2, speedLost, true).includes("wheel-0"));
+  assert.ok(boosted.corners[0] > lifted.corners[0] * 1.5);
+});
+check("damage clears on repair", () => {
+  const model = new DamageModel();
+  hitFrom(model, 0, 1, 40);
+  assert.ok(model.broken.size > 0);
+  model.reset();
+  assert.equal(model.broken.size, 0);
+  assert.equal(model.worstCorner, 0);
+});
+
+// The unit tests above only prove the bookkeeping. This one proves a real car driven into a real
+// barrier actually sheds parts, and that ordinary racing never does.
+function crashIntoWall(entrySpeed, yawDeg) {
+  const world = new PhysicsWorld(rapier);
+  world.world.createCollider(rapier.ColliderDesc.cuboid(500, 0.5, 500).setTranslation(0, -0.5, 0));
+  world.world.createCollider(rapier.ColliderDesc.cuboid(100, 1, 0.25).setTranslation(0, 1, 26)
+    .setFriction(0.04).setFrictionCombineRule(rapier.CoefficientCombineRule.Min)
+    .setRestitution(0.1).setRestitutionCombineRule(rapier.CoefficientCombineRule.Min));
+  const yaw = (yawDeg * Math.PI) / 180;
+  const car = new Vehicle(rapier, world.world, new THREE.Scene(), new THREE.Vector3(0, 1.15, 0), yaw, "#fff");
+  for (let i = 0; i < 100; i++) world.step(1 / 120, dt => car.physicsStep(dt, idle));
+  // Prescribe the entry speed rather than driving up to it, so the test states the crash it means.
+  car.body.setLinvel({ x: Math.sin(yaw) * entrySpeed, y: 0, z: Math.cos(yaw) * entrySpeed }, true);
+  let released = 0;
+  for (let i = 0; i < 4 * 120; i++) {
+    world.step(1 / 120, dt => car.physicsStep(dt, idle));
+    car.syncVisuals();
+    released += car.consumeBrokenParts().length;
+  }
+  const result = { released, broken: [...car.damage.broken].sort(), worst: +car.damage.worstCorner.toFixed(2) };
+  world.world.free();
+  return result;
+}
+const bigCrash = crashIntoWall(38, 0);
+const nudge = crashIntoWall(6, 0);
+/** The same crash against the real circuit barrier, aimed so one front corner arrives first. */
+function crashIntoBarrierAt(entrySpeed, yawOffsetDeg) {
+  const world = new PhysicsWorld(rapier);
+  buildGroundCollider(rapier, world.world, path);
+  const frame = path.frameAtDistance(200);
+  const spawn = frame.point.clone();
+  spawn.y = DEFAULT_VEHICLE_CONFIG.spawnHeight;
+  const yaw = Math.atan2(frame.tangent.x, frame.tangent.z) + (yawOffsetDeg * Math.PI) / 180;
+  const car = new Vehicle(rapier, world.world, new THREE.Scene(), spawn, yaw, "#fff");
+  for (let i = 0; i < 120; i++) world.step(1 / 120, dt => car.physicsStep(dt, idle));
+  car.body.setLinvel({ x: Math.sin(yaw) * entrySpeed, y: 0, z: Math.cos(yaw) * entrySpeed }, true);
+  let released = 0;
+  for (let i = 0; i < 3 * 120; i++) {
+    world.step(1 / 120, dt => car.physicsStep(dt, idle));
+    car.syncVisuals();
+    released += car.consumeBrokenParts().length;
+  }
+  const result = { released, broken: [...car.damage.broken].sort(), worst: +car.damage.worstCorner.toFixed(2) };
+  world.world.free();
+  return result;
+}
+const cornerCrash = crashIntoBarrierAt(52, 58);
+console.log(JSON.stringify({ bigCrash, nudge, cornerCrash }));
+check("a big shunt breaks the car, a slow nudge does not", () => {
+  assert.ok(bigCrash.broken.includes("front-wing"), "a 137 km/h nose-on hit must at least take the wing: " + JSON.stringify(bigCrash));
+  assert.equal(bigCrash.released, bigCrash.broken.length, "every broken part must come loose exactly once");
+  assert.deepEqual(nudge.broken, [], "a 22 km/h bump must leave the car intact: " + JSON.stringify(nudge));
+  assert.ok(!bigCrash.broken.some(p => p.startsWith("wheel")),
+    "a square nose-on hit spreads across both front corners, so the wheels should survive it");
+  // Clipping the same wall with one corner instead concentrates everything there.
+  assert.ok(cornerCrash.broken.some(p => p.startsWith("wheel")),
+    "a corner-on hit at 187 km/h must tear a wheel off: " + JSON.stringify(cornerCrash));
+  assert.equal(cornerCrash.released, cornerCrash.broken.length);
+});
+const cruise = (() => {
+  const world = new PhysicsWorld(rapier);
+  buildGroundCollider(rapier, world.world, path);
+  const frame = path.frameAtDistance(60);
+  const spawn = frame.point.clone();
+  spawn.y = DEFAULT_VEHICLE_CONFIG.spawnHeight;
+  const car = new Vehicle(rapier, world.world, new THREE.Scene(), spawn,
+    Math.atan2(frame.tangent.x, frame.tangent.z), "#fff");
+  const line = new RacingLine(path);
+  const race = new RaceManager(path, 1);
+  const racer = race.addRacer("d", "D", false, car, "#fff");
+  const driver = new AIController(path, line, racer, randomAIPersonality(3), race.racers, () => {});
+  for (let i = 0; i < 60 * 45; i++) {
+    const input = driver.sample(1 / 60);
+    world.step(1 / 60, dt => car.physicsStep(dt, input));
+    race.update(1000 / 60);
+  }
+  const result = { broken: [...car.damage.broken], worst: +car.damage.worstCorner.toFixed(3) };
+  world.world.free();
+  return result;
+})();
+console.log(JSON.stringify({ cruise }));
+check("a clean lap of racing damages nothing", () => {
+  assert.deepEqual(cruise.broken, [], "ordinary racing must not break the car: " + JSON.stringify(cruise));
+  assert.equal(cruise.worst, 0);
+});
+check("a wheel that has come off stops driving and stops gripping", () => {
+  const world = new PhysicsWorld(rapier);
+  world.world.createCollider(rapier.ColliderDesc.cuboid(500, 0.5, 500).setTranslation(0, -0.5, 0));
+  const car = new Vehicle(rapier, world.world, new THREE.Scene(), new THREE.Vector3(0, 1.15, 0), 0, "#fff");
+  for (let i = 0; i < 100; i++) world.step(1 / 120, dt => car.physicsStep(dt, idle));
+  for (let i = 0; i < 360; i++) world.step(1 / 120, dt => car.physicsStep(dt, { ...idle, throttle: 1 }));
+  const healthySpeed = car.telemetry.forwardSpeedMs;
+  car.resetTo(new THREE.Vector3(0, 0, 0), 0);
+  assert.equal(car.damage.broken.size, 0, "a reset must put the car back together");
+  // Break both driven wheels outright, then ask for the same three seconds of full throttle.
+  // deltaV along +Z throws the car forward, so the blow came from behind and lands on the rear.
+  for (let i = 0; i < 2; i++) {
+    car.damage.register(0, 40, 40, new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), false);
+  }
+  assert.ok(car.damage.has("wheel-2") && car.damage.has("wheel-3"), [...car.damage.broken].join(","));
+  for (let i = 0; i < 100; i++) world.step(1 / 120, dt => car.physicsStep(dt, idle));
+  for (let i = 0; i < 360; i++) world.step(1 / 120, dt => car.physicsStep(dt, { ...idle, throttle: 1 }));
+  console.log(JSON.stringify({ healthySpeed: +healthySpeed.toFixed(1), crippledSpeed: +car.telemetry.forwardSpeedMs.toFixed(1) }));
+  assert.ok(car.telemetry.forwardSpeedMs < healthySpeed * 0.25,
+    "a car with both driven wheels gone must barely move: " + car.telemetry.forwardSpeedMs.toFixed(1));
+  world.world.free();
+});
+
+const { Debris } = await import("../src/vfx/Debris.ts");
+check("debris falls, settles on the ground and is cleaned up", () => {
+  const pile = new Debris();
+  const piece = new THREE.Object3D();
+  piece.position.set(0, 1.4, 0);
+  pile.spawn(piece, new THREE.Vector3(0, 0, 20), 1);
+  assert.equal(pile.count, 1);
+  assert.equal(piece.parent, pile.group);
+  for (let i = 0; i < 60 * 4; i++) pile.update(1 / 60);
+  assert.ok(piece.position.y >= 0 && piece.position.y < 0.2, "a part must end up on the ground: " + piece.position.y);
+  assert.ok(piece.position.z > 1, "it should be thrown along with the car");
+  for (let i = 0; i < 60 * 12; i++) pile.update(1 / 60);
+  assert.equal(pile.count, 0, "debris must not accumulate forever");
+  assert.equal(piece.parent, null);
+  // The pool is bounded even if a whole grid disintegrates at once.
+  for (let i = 0; i < 80; i++) pile.spawn(new THREE.Object3D(), new THREE.Vector3(), i);
+  assert.ok(pile.count <= 28, "debris pool overflowed: " + pile.count);
+});
+
 console.log("Completed " + checks.length + " regression checks.");

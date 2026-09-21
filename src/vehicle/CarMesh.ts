@@ -8,6 +8,12 @@ export interface CarMeshSet {
   wheels: THREE.Group[];
   brakeLights: THREE.Mesh[];
   bodyMaterial: THREE.MeshStandardMaterial;
+  /**
+   * The two aero wings, kept as their own sub-groups rather than merged into the body batch so a
+   * crash can rip one off. Everything else is welded together and stays with the chassis.
+   */
+  frontWing: THREE.Group;
+  rearWing: THREE.Group;
 }
 
 function box(parent: THREE.Object3D, material: THREE.Material, size: number[], position: number[], rounded = false): THREE.Mesh {
@@ -128,16 +134,26 @@ export function buildCarMesh(config: VehicleConfig, color: THREE.ColorRepresenta
   box(root, bodyMaterial, [0.28, 0.58, 0.35], [0, 0.39, -0.61], true);
   box(root, carbon, [0.17, 0.2, 0.028], [0, 0.53, -0.42]);
 
-  // Wide, stacked aero wings and upright endplates.
-  box(root, bodyMaterial, [2.48, 0.09, 0.5], [0, -0.29, 2.14]);
-  box(root, accent, [2.22, 0.065, 0.18], [0, -0.18, 2.0]);
+  // Wide, stacked aero wings and upright endplates. Both wings live in their own group: a group
+  // is not a Mesh, so the body batch below skips them and they stay detachable.
+  const frontWing = new THREE.Group();
+  frontWing.name = "front-wing";
+  root.add(frontWing);
+  box(frontWing, bodyMaterial, [2.48, 0.09, 0.5], [0, -0.29, 2.14]);
+  box(frontWing, accent, [2.22, 0.065, 0.18], [0, -0.18, 2.0]);
+  const rearWing = new THREE.Group();
+  rearWing.name = "rear-wing";
+  root.add(rearWing);
   for (const side of [-1, 1]) {
-    box(root, bodyMaterial, [0.065, 0.26, 0.62], [side * 1.2, -0.18, 2.12]);
+    box(frontWing, bodyMaterial, [0.065, 0.26, 0.62], [side * 1.2, -0.18, 2.12]);
+    // The pylons are bolted to the chassis, so they stay behind when the wing goes.
     box(root, suspension, [0.07, 0.86, 0.15], [side * 0.52, 0.06, -1.9]);
-    box(root, bodyMaterial, [0.07, 0.5, 0.67], [side * 1.01, 0.5, -1.92]);
+    box(rearWing, bodyMaterial, [0.07, 0.5, 0.67], [side * 1.01, 0.5, -1.92]);
   }
-  box(root, bodyMaterial, [2.06, 0.11, 0.57], [0, 0.68, -1.92]);
-  box(root, accent, [1.94, 0.05, 0.13], [0, 0.51, -1.75]);
+  box(rearWing, bodyMaterial, [2.06, 0.11, 0.57], [0, 0.68, -1.92]);
+  box(rearWing, accent, [1.94, 0.05, 0.13], [0, 0.51, -1.75]);
+  batchParts(frontWing);
+  batchParts(rearWing);
   for (let i = -2; i <= 2; i++) box(root, carbon, [0.055, 0.24, 0.57], [i * 0.24, -0.34, -1.96]);
 
   const wheelY = config.connectionPointY - config.suspensionRestLength;
@@ -163,5 +179,5 @@ export function buildCarMesh(config: VehicleConfig, color: THREE.ColorRepresenta
     return wheel;
   });
   batchParts(root, lamp);
-  return { root, wheels, brakeLights: [lamp], bodyMaterial };
+  return { root, wheels, brakeLights: [lamp], bodyMaterial, frontWing, rearWing };
 }

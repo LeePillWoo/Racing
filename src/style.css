@@ -45,6 +45,9 @@ button:focus-visible,canvas:focus-visible{outline:3px solid #e5f34b;outline-offs
 #start-button{width:290px;display:flex;justify-content:space-between;align-items:center}
 #start-button:hover,#resume-button:hover,#finish-restart:hover{background:#f3ff78;transform:translateY(-1px)}
 #start-button>span{font-size:22px}
+.pause-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+#menu-button{border:1px solid #c6d6e455;border-radius:3px;padding:17px 24px;background:transparent;color:#dce7f2;font-size:14px;font-weight:800}
+#menu-button:hover{background:#ffffff14;border-color:#e5f34b}
 .controls-help{display:flex;flex-direction:column;gap:9px;font-size:10px;color:#bac8d6;margin-top:22px}
 kbd{font:inherit;font-size:9px;border:1px solid #a8bbce50;padding:2px 5px;border-radius:2px;margin-right:3px}
 .start-footer{position:absolute;bottom:25px;left:7vw;right:35px;display:flex;justify-content:space-between;font-size:8px;letter-spacing:2px;color:#d7e2ed99}
