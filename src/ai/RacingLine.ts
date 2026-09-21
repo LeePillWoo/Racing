@@ -60,7 +60,9 @@ export class RacingLine {
   readonly fastestSpeed: number;
 
   constructor(path: TrackPath, options: Partial<RacingLineOptions> = {}) {
-    const opts = { ...DEFAULT_RACING_LINE_OPTIONS, ...options };
+    // How far the line may stray follows the road it is drawn on, so a narrower circuit gets a
+    // correspondingly narrower line rather than one that hangs over the kerb.
+    const opts = { ...DEFAULT_RACING_LINE_OPTIONS, maxOffset: path.halfWidth - 2.6, ...options };
     this.totalLength = path.totalLength;
     this.count = opts.sampleCount;
     this.spacing = this.totalLength / this.count;

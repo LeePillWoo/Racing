@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { TrackPath, ROAD_HALF_WIDTH } from "../track/TrackPath";
+import { TrackPath } from "../track/TrackPath";
 import type { Vehicle } from "../vehicle/Vehicle";
 
 export interface Racer {
@@ -50,7 +50,7 @@ export class RaceManager {
       if (diff > this.path.totalLength / 2) diff -= this.path.totalLength;
       else if (diff < -this.path.totalLength / 2) diff += this.path.totalLength;
       // Preserve the last valid location for reset; driving through the infield earns no progress.
-      if (Math.abs(diff) >= 25 || distance > ROAD_HALF_WIDTH + 3) continue;
+      if (Math.abs(diff) >= 25 || distance > this.path.halfWidth + 3) continue;
       racer.sampleHint = index;
       const before = racer.distanceTraveled;
       racer.distanceTraveled += diff;

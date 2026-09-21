@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { loadRapier, PhysicsWorld } from "../physics/PhysicsWorld";
 import { TrackPath } from "../track/TrackPath";
+import { DEFAULT_TRACK, TrackDef } from "../track/TrackCatalog";
 import { buildRoadMesh } from "../track/RoadMesh";
 import { buildEnvironment, EnvironmentHandles } from "../track/Environment";
 import { buildGroundCollider } from "../track/TrackColliders";
@@ -17,7 +18,6 @@ import { SkidMarks } from "../vfx/SkidMarks";
 import { TireSmoke } from "../vfx/TireSmoke";
 import { createSoftDotTexture } from "../utils/Textures";
 
-const TOTAL_LAPS = 3;
 const AI_NAMES = ["FALCON", "VIPER", "SCORPION", "MIRAGE", "COMET", "NOVA", "ATLAS", "BLAZE", "ORION", "VERTEX", "PULSE"];
 const AI_COLORS = ["#e34259", "#00a893", "#fdac35", "#8b35dd", "#b0d52c", "#32bfe5", "#ff6b40", "#d63eb0", "#22ac63", "#792bd9", "#a5d829"];
 const PLAYER_COLOR = "#145acb";
@@ -51,7 +51,8 @@ export class Game {
   private raceFinishedShown = false;
   private readonly countdownEl = document.getElementById("countdown")!;
 
-  constructor(private readonly canvas: HTMLCanvasElement, private readonly uiRoot: HTMLElement) {
+  constructor(private readonly canvas: HTMLCanvasElement, private readonly uiRoot: HTMLElement,
+              private readonly track: TrackDef = DEFAULT_TRACK) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -86,8 +87,8 @@ export class Game {
     onProgress(0.05, "물리 엔진 준비 중");
     const rapier = await loadRapier();
     this.physics = new PhysicsWorld(rapier);
-    onProgress(0.25, "그랑프리 서킷 생성 중");
-    this.path = new TrackPath();
+    onProgress(0.25, `${this.track.name} 서킷 생성 중`);
+    this.path = new TrackPath(this.track);
     this.racingLine = new RacingLine(this.path);
     this.scene.add(buildRoadMesh(this.path));
     this.scene.add(this.skidMarks.mesh);
@@ -99,7 +100,7 @@ export class Game {
     const grid = this.buildStartGrid(12);
     const playerSlot = grid[11];
     this.playerVehicle = new Vehicle(rapier, this.physics.world, this.scene, playerSlot.position, playerSlot.yawRad, PLAYER_COLOR);
-    this.raceManager = new RaceManager(this.path, TOTAL_LAPS);
+    this.raceManager = new RaceManager(this.path, this.track.laps);
     this.playerRacer = this.raceManager.addRacer("player", "YOU", true, this.playerVehicle, PLAYER_COLOR);
     for (let i = 0; i < AI_NAMES.length; i++) {
       const slot = grid[i], color = AI_COLORS[i];
@@ -246,7 +247,7 @@ export class Game {
       boostRemainingSec: telemetry.boostRemainingSec, boosting: telemetry.boosting,
       maxBoostSec: DEFAULT_VEHICLE_CONFIG.drift.maxBoostSec,
       currentLapMs: this.raceManager.currentLapMs(this.playerRacer), bestLapMs: this.playerRacer.bestLapMs,
-      lapNumber: this.playerRacer.highestLapFloor, totalLaps: TOTAL_LAPS,
+      lapNumber: this.playerRacer.highestLapFloor, totalLaps: this.track.laps,
       rank: this.playerRacer.rank, totalRacers: this.raceManager.racers.length,
       standings: [...this.raceManager.racers].sort((a, b) => a.rank - b.rank), dt,
     });

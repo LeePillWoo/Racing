@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { TrackPath } from "./TrackPath";
-import { createGrassTexture } from "../utils/Textures";
+import { GroundPatch } from "./TrackCatalog";
+import { barrierOffset } from "./RoadMesh";
+import { createGrassTexture, createSandTexture, createWaterNoiseTexture, createAsphaltTexture } from "../utils/Textures";
 
 export interface EnvironmentHandles {
   sunLight: THREE.DirectionalLight;
@@ -33,10 +35,10 @@ function sign(text: string, width: number, height: number, background = "#102c4b
     new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide }));
 }
 
-function grandstand(scene: THREE.Scene, path: TrackPath, u: number, side: number): void {
+function grandstand(scene: THREE.Scene, path: TrackPath, u: number, side: number, banner: string): void {
   const f = path.frameAtDistance(u);
   const root = new THREE.Group();
-  root.position.copy(f.point).addScaledVector(f.right, side * 28);
+  root.position.copy(f.point).addScaledVector(f.right, side * (barrierOffset(path) + 14.5));
   root.rotation.y = Math.atan2(f.tangent.x, f.tangent.z);
   scene.add(root);
   const concrete = new THREE.MeshStandardMaterial({ color: "#aebec8", roughness: 0.9 });
@@ -61,38 +63,110 @@ function grandstand(scene: THREE.Scene, path: TrackPath, u: number, side: number
   root.add(crowd);
   for (const z of [-29, 0, 29]) block(root, concrete, [0.18, 6.2, 0.18], [side * 8.4, 3.1, z]);
   block(root, roof, [11.5, 0.18, 61], [side * 4, 6.15, 0]);
-  const board = sign("APEX  /  GRAND PRIX", 48, 1.1);
+  const board = sign(banner, 48, 1.1);
   board.position.set(-side * 1.2, 0.7, 0); board.rotation.y = -side * Math.PI / 2; root.add(board);
 }
 
+/** A low pit/paddock building alongside the start straight — the beige shed every kart circuit has. */
+function pitBuilding(scene: THREE.Scene, path: TrackPath, u: number, side: number, banner: string): void {
+  const f = path.frameAtDistance(u);
+  const root = new THREE.Group();
+  root.position.copy(f.point).addScaledVector(f.right, side * (barrierOffset(path) + 17));
+  root.rotation.y = Math.atan2(f.tangent.x, f.tangent.z);
+  scene.add(root);
+  const wall = new THREE.MeshStandardMaterial({ color: "#f0e0bc", roughness: 0.95 });
+  const roof = new THREE.MeshStandardMaterial({ color: "#c8b183", roughness: 0.9 });
+  const glass = new THREE.MeshStandardMaterial({ color: "#3c5f77", roughness: 0.3, metalness: 0.4 });
+  block(root, wall, [14, 6, 74], [0, 3, 0]);
+  block(root, roof, [16.5, 0.6, 77], [0, 6.3, 0]);
+  for (let i = 0; i < 9; i++) block(root, glass, [0.3, 1.9, 6], [-side * 7.1, 4.2, -32 + i * 8]);
+  const board = sign(banner, 40, 1.5);
+  board.position.set(-side * 7.3, 1.8, 0); board.rotation.y = -side * Math.PI / 2; root.add(board);
+}
+
+/**
+ * Everything painted on the terrain shares one trick: a polygon offset that pushes it away from
+ * the camera in depth. The road sits only a couple of centimetres above the ground plane, and at
+ * the grazing angle a chase camera looks down the road that is far below the depth buffer can
+ * resolve — without this the 2.4 km ground plane wins and the asphalt disappears under grass.
+ */
+function pushBack<T extends THREE.Material>(material: T, order: number): T {
+  material.polygonOffset = true;
+  material.polygonOffsetFactor = order;
+  material.polygonOffsetUnits = order;
+  return material;
+}
+
+function patchMaterial(kind: GroundPatch["kind"]): THREE.MeshStandardMaterial {
+  if (kind === "water") {
+    const map = createWaterNoiseTexture(); map.repeat.set(9, 9);
+    return pushBack(new THREE.MeshStandardMaterial({ map, color: "#2f8fc4", roughness: 0.18, metalness: 0.28 }), 4);
+  }
+  if (kind === "sand") {
+    const map = createSandTexture(); map.repeat.set(16, 16);
+    return pushBack(new THREE.MeshStandardMaterial({ map, roughness: 1 }), 4);
+  }
+  if (kind === "paddock") {
+    const map = createAsphaltTexture(); map.repeat.set(70, 70);
+    return pushBack(new THREE.MeshStandardMaterial({ map, color: "#7d7f88", roughness: 1 }), 6);
+  }
+  const map = createGrassTexture(); map.repeat.set(24, 24);
+  return pushBack(new THREE.MeshStandardMaterial({ map, roughness: 1 }), 4);
+}
+
 export function buildEnvironment(scene: THREE.Scene, path: TrackPath): EnvironmentHandles {
-  scene.background = new THREE.Color("#b7e0f5");
-  scene.fog = new THREE.Fog("#d6edf2", 260, 1050);
+  const theme = path.def.theme;
+  scene.background = new THREE.Color(theme.background);
+  scene.fog = new THREE.Fog(theme.fog.color, theme.fog.near, theme.fog.far);
   const sky = new THREE.Mesh(new THREE.SphereGeometry(1500, 32, 20), new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false,
-    uniforms: { time: { value: 0 }, top: { value: new THREE.Color("#38a7eb") }, bottom: { value: new THREE.Color("#d9f3ff") } },
+    uniforms: { time: { value: 0 }, top: { value: new THREE.Color(theme.skyTop) }, bottom: { value: new THREE.Color(theme.skyBottom) } },
     vertexShader: "varying vec3 vDirection; void main(){vDirection=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}",
     fragmentShader: "uniform vec3 top;\nuniform vec3 bottom;\nuniform float time;\nvarying vec3 vDirection;\nfloat hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }\nfloat noise(vec2 p){\n  vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);\n  return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);\n}\nfloat fbm(vec2 p){\n  float n=0.0, a=0.5;\n  for(int i=0;i<5;i++){n+=a*noise(p);p=p*2.03+vec2(7.1,3.4);a*=0.5;}\n  return n;\n}\nvoid main(){\n  vec3 d=normalize(vDirection);\n  float h=max(d.y,0.0);\n  vec3 color=mix(bottom,top,pow(h,0.32));\n  vec2 uv=d.xz/(h+0.26)*2.0+vec2(time,0.0);\n  float shape=fbm(uv*2.4+fbm(uv*0.8));\n  float cloud=smoothstep(0.43,0.68,shape)*smoothstep(0.015,0.12,h);\n  color=mix(color,vec3(1.2,1.23,1.25),cloud*0.93);\n  gl_FragColor=vec4(color,1.0);\n  #include <tonemapping_fragment>\n  #include <colorspace_fragment>\n}",
   }));
   sky.name = 'daylight-sky';
   scene.add(sky);
-  const grass = createGrassTexture(); grass.repeat.set(110, 110);
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000),
-    new THREE.MeshStandardMaterial({ map: grass, roughness: 1 }));
+  const terrain = theme.terrain === "sand" ? createSandTexture() : createGrassTexture();
+  terrain.repeat.set(110, 110);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(2400, 2400),
+    pushBack(new THREE.MeshStandardMaterial({ map: terrain, roughness: 1 }), 8));
   ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true;
   scene.add(ground);
 
+  // Ground patches: lakes, sand plateaus, the black paddock apron. Stacked a few millimetres
+  // apart in list order so a later patch always wins over an earlier one without z-fighting.
+  const water: THREE.Mesh[] = [];
+  theme.patches.forEach((patch, i) => {
+    const mesh = new THREE.Mesh(new THREE.CircleGeometry(1, 64), patchMaterial(patch.kind));
+    mesh.scale.set(patch.rx, patch.rz, 1);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(patch.x, 0.004 + i * 0.003, patch.z);
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+    if (patch.kind === "water") water.push(mesh);
+  });
+
   // Instanced vegetation keeps the trackside scenery inexpensive.
-  const rand = random(71), treeCount = 210;
+  const rand = random(71), treeCount = theme.trees;
   const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.15, 0.24, 3.4, 6),
-    new THREE.MeshStandardMaterial({ color: "#77604b", roughness: 1 }), treeCount);
+    new THREE.MeshStandardMaterial({ color: "#77604b", roughness: 1 }), Math.max(1, treeCount));
   const crowns = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1),
-    new THREE.MeshStandardMaterial({ color: "#45822f", roughness: 1 }), treeCount);
+    new THREE.MeshStandardMaterial({ color: "#45822f", roughness: 1 }), Math.max(1, treeCount));
   const dummy = new THREE.Object3D();
+  // Scatter across the actual footprint of this circuit, not a fixed box around the origin.
+  const samples = path.getSamplePoints();
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const p of samples) {
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+    minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+  }
+  const spanX = maxX - minX + 380, spanZ = maxZ - minZ + 380;
+  const midX = (minX + maxX) / 2, midZ = (minZ + maxZ) / 2;
+  const clearance = barrierOffset(path) + 26;
   let placed = 0;
-  for (let attempt = 0; attempt < 2200 && placed < treeCount; attempt++) {
-    const p = new THREE.Vector3((rand() - 0.5) * 1050 + 110, 0, (rand() - 0.5) * 1050);
-    if (path.projectPoint(p).distance < 48) continue;
+  for (let attempt = 0; attempt < treeCount * 14 && placed < treeCount; attempt++) {
+    const p = new THREE.Vector3(midX + (rand() - 0.5) * spanX, 0, midZ + (rand() - 0.5) * spanZ);
+    if (path.projectPoint(p).distance < clearance) continue;
     const scale = 0.8 + rand() * 1.4;
     dummy.position.copy(p); dummy.position.y = 1.7 * scale;
     dummy.scale.setScalar(scale); dummy.updateMatrix(); trunks.setMatrixAt(placed, dummy.matrix);
@@ -102,17 +176,18 @@ export function buildEnvironment(scene: THREE.Scene, path: TrackPath): Environme
     placed++;
   }
   trunks.count = crowns.count = placed; crowns.castShadow = true;
-  scene.add(trunks, crowns);
-  grandstand(scene, path, 32, -1); grandstand(scene, path, 105, -1); grandstand(scene, path, 118, 1);
-  grandstand(scene, path, path.totalLength - 68, -1);
+  if (placed > 0) scene.add(trunks, crowns);
+  for (const stand of theme.grandstands) grandstand(scene, path, stand.u, stand.side, theme.banner);
+  if (theme.pitBuilding) pitBuilding(scene, path, theme.pitBuilding.u, theme.pitBuilding.side, theme.banner);
 
   const f = path.frameAtDistance(8), gantry = new THREE.Group();
   gantry.position.copy(f.point); gantry.rotation.y = Math.atan2(f.tangent.x, f.tangent.z);
   const steel = new THREE.MeshStandardMaterial({ color: "#e1e8ed", roughness: 0.5, metalness: 0.4 });
-  block(gantry, steel, [0.35, 6, 0.35], [-12, 3, 0]);
-  block(gantry, steel, [0.35, 6, 0.35], [12, 3, 0]);
-  block(gantry, steel, [24.5, 0.25, 0.4], [0, 6, 0]);
-  const banner = sign("APEX  /  FORMULA CIRCUIT", 23.5, 1.35);
+  const post = path.halfWidth + 3;
+  block(gantry, steel, [0.35, 6, 0.35], [-post, 3, 0]);
+  block(gantry, steel, [0.35, 6, 0.35], [post, 3, 0]);
+  block(gantry, steel, [post * 2 + 0.5, 0.25, 0.4], [0, 6, 0]);
+  const banner = sign(theme.banner, post * 2, 1.35);
   banner.rotation.y = Math.PI;
   banner.position.set(0, 5.3, -0.24); gantry.add(banner); scene.add(gantry);
   for (let i = 0; i < 5; i++) {
@@ -121,7 +196,7 @@ export function buildEnvironment(scene: THREE.Scene, path: TrackPath): Environme
   }
 
   const balloons: THREE.Group[] = [];
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < theme.balloons; i++) {
     const balloon = new THREE.Group(), radius = 4.2 + rand() * 2;
     const materials = ["#f3f0db", i % 2 ? "#e04a56" : "#225898"].map(color => new THREE.MeshStandardMaterial({ color, roughness: 0.85 }));
     for (let panel = 0; panel < 12; panel++) {
@@ -129,22 +204,27 @@ export function buildEnvironment(scene: THREE.Scene, path: TrackPath): Environme
       mesh.scale.y = 1.25; balloon.add(mesh);
     }
     block(balloon, new THREE.MeshStandardMaterial({ color: "#82613a" }), [1.3, 0.9, 1.1], [0, -radius * 1.5, 0]);
-    balloon.position.set(-170 + i * 92, 65 + rand() * 45, 160 + rand() * 210);
+    balloon.position.set(midX - 170 + i * 92, 65 + rand() * 45, midZ + 160 + rand() * 210);
     scene.add(balloon); balloons.push(balloon);
   }
   const sunDirection = new THREE.Vector3(-0.45, 0.85, -0.3).normalize();
-  const sunLight = new THREE.DirectionalLight("#fff8ed", 2.5);
+  const sunLight = new THREE.DirectionalLight(theme.sun.color, theme.sun.intensity);
   sunLight.castShadow = true;
   sunLight.shadow.mapSize.set(2048, 2048);
   Object.assign(sunLight.shadow.camera, { near: 5, far: 240, left: -55, right: 55, top: 55, bottom: -55 });
   sunLight.shadow.bias = -0.0002; sunLight.shadow.normalBias = 0.025;
-  scene.add(sunLight, sunLight.target, new THREE.HemisphereLight("#c5e7ff", "#779440", 1.6));
+  scene.add(sunLight, sunLight.target,
+    new THREE.HemisphereLight(theme.hemisphere.sky, theme.hemisphere.ground, theme.hemisphere.intensity));
   const offset = sunDirection.multiplyScalar(110);
   return {
     sunLight,
     update(dt, elapsed) {
       (sky.material as THREE.ShaderMaterial).uniforms.time.value += dt * 0.018;
       balloons.forEach((balloon, i) => { balloon.rotation.y = elapsed * 0.025 + i; });
+      for (const lake of water) {
+        const map = (lake.material as THREE.MeshStandardMaterial).map;
+        if (map) { map.offset.x = elapsed * 0.012; map.offset.y = elapsed * 0.008; }
+      }
     },
     followSun(target) {
       sunLight.position.copy(target).add(offset);

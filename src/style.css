@@ -29,7 +29,15 @@ button:focus-visible,canvas:focus-visible{outline:3px solid #e5f34b;outline-offs
 .start-card h1{font-size:clamp(56px,7.1vw,108px);line-height:.91;letter-spacing:-5px;font-style:italic;font-weight:900;margin:34px 0 25px}
 .start-card h1>span{color:#e5f34b}
 .start-description{font-size:13px;line-height:1.95;color:#cfdae5}
-.race-specs{display:flex;gap:38px;margin:30px 0}
+.track-select{display:flex;gap:12px;margin:24px 0 4px}
+.track-card{display:flex;flex-direction:column;align-items:flex-start;gap:3px;flex:1;min-width:0;padding:11px 12px 13px;border:1px solid #9fb8d030;border-radius:4px;background:#0e2036a8;color:inherit;text-align:left;font:inherit}
+.track-card:hover{border-color:#e5f34b70;background:#14304ec4}
+.track-card.selected{border-color:#e5f34b;background:#15314fd6;box-shadow:0 0 0 1px #e5f34b55}
+.track-thumb{width:100%;height:auto;aspect-ratio:1;margin-bottom:6px;opacity:.72}
+.track-card.selected .track-thumb{opacity:1}
+.track-name{font-size:11px;font-weight:800;letter-spacing:.6px}
+.track-sub{font-size:8px;letter-spacing:1.4px;color:#9db2c6}
+.race-specs{display:flex;gap:38px;margin:22px 0 26px}
 .race-specs>div{display:flex;flex-direction:column;gap:4px}
 .race-specs b{font-size:25px;font-weight:800}
 .race-specs span{font-size:8px;letter-spacing:2px;color:#a0b5c8}
@@ -97,7 +105,8 @@ body:has(.finish-overlay) .hud-layer{opacity:1}
 @media(max-width:700px){
 .race-brand{top:18px;left:18px;font-size:15px}.race-brand>span:last-child{display:none}
 #start-screen{padding:70px 7vw;background:linear-gradient(90deg,#0a192beb,#0a192b65)}
-.start-card h1{font-size:70px}.start-description{font-size:12px}.race-specs{margin:24px 0}
+.start-card h1{font-size:70px;margin:22px 0 16px}.start-description{font-size:12px}.race-specs{margin:16px 0 20px;gap:26px}
+.track-select{gap:8px;margin:16px 0 2px}.track-card{padding:8px 8px 10px}.track-name{font-size:10px}.track-sub{font-size:7px}
 .start-footer{font-size:7px}.start-footer>span:last-child{display:none}
 .hud-top-left{top:70px;left:14px}.hud-panel{padding:9px 11px}.hud-laptime{font-size:18px}.hud-sublap{font-size:8px}
 .hud-position{top:148px;left:14px;min-width:120px;font-size:29px}
@@ -109,7 +118,8 @@ body:has(.finish-overlay) .hud-layer{opacity:1}
 .race-actions button{padding:8px}.race-actions #reset-button{display:none}
 }
 @media(pointer:coarse){.racing .touch-controls{display:flex}.hud-bottom-right{bottom:90px}.drift-stack{bottom:248px}}
-@media(max-height:600px){.start-card h1{font-size:54px;margin:18px 0}.race-specs{margin:16px 0}.controls-help{gap:5px;margin-top:12px}.start-description{margin:8px 0}.start-footer{display:none}.hud-standings .standing-row:nth-child(n+7){display:none}}
+@media(max-height:680px){.track-thumb{display:none}.track-select{margin:14px 0 2px}}
+@media(max-height:600px){.start-card h1{font-size:54px;margin:18px 0}.race-specs{margin:12px 0 16px}.controls-help{gap:5px;margin-top:12px}.start-description{margin:8px 0}.start-footer{display:none}.hud-standings .standing-row:nth-child(n+7){display:none}}
 
 .boost-label{font-size:10px;color:#ffcc83;letter-spacing:1px;margin-bottom:5px}
 .touch-controls button[data-control="ShiftLeft"]{background:#ed7832;color:#fff}

@@ -1,17 +1,8 @@
 import * as THREE from "three";
+import { DEFAULT_TRACK, TrackDef } from "./TrackCatalog";
 
-/**
- * Closed control points for the circuit centerline: a parkland Grand Prix loop that
- * opens onto a long grandstand-lined start straight. Units are meters, flat
- * on Y so the physics ground plane stays trivially simple.
- */
-const CONTROL_POINTS: Array<[number, number]> = [
-  [0, 0], [0, 75], [0, 165], [35, 230], [130, 255],
-  [200, 210], [210, 125], [160, 65], [175, -30], [265, -100],
-  [245, -185], [160, -220], [80, -185], [40, -115], [0, -80],
-];
-
-export const ROAD_HALF_WIDTH = 9;
+/** Road half-width of the default circuit. Per-track code should read `path.halfWidth`. */
+export const ROAD_HALF_WIDTH = DEFAULT_TRACK.halfWidth;
 export const SHOULDER_WIDTH = 6;
 
 export interface TrackFrame {
@@ -25,12 +16,14 @@ export interface TrackFrame {
 export class TrackPath {
   readonly curve: THREE.CatmullRomCurve3;
   readonly totalLength: number;
+  readonly halfWidth: number;
   private readonly sampleCount: number;
   private readonly samplePoints: THREE.Vector3[] = [];
   private readonly sampleCumLength: number[] = [];
 
-  constructor(sampleCount = 2400) {
-    const points = CONTROL_POINTS.map(([x, z]) => new THREE.Vector3(x, 0, z));
+  constructor(readonly def: TrackDef = DEFAULT_TRACK, sampleCount = 2400) {
+    this.halfWidth = def.halfWidth;
+    const points = def.controlPoints.map(([x, z]) => new THREE.Vector3(x, 0, z));
     this.curve = new THREE.CatmullRomCurve3(points, true, "catmullrom", 0.5);
     this.sampleCount = sampleCount;
 
@@ -111,5 +104,27 @@ export class TrackPath {
 
   getSamplePoints(): readonly THREE.Vector3[] {
     return this.samplePoints;
+  }
+
+  /**
+   * True when `point` — taken from the frame at arc-length `u` — is sitting on a *different*
+   * stretch of the same road, which only happens where a layout crosses over itself. Kerbs and
+   * barriers ask this before drawing, so a flyover-at-grade does not wall its own crossing shut.
+   */
+  overlapsRoadElsewhere(point: THREE.Vector3, u: number, margin = 0.8): boolean {
+    if (!this.def.crossover) return false;
+    const hit = this.projectPoint(point);
+    let gap = Math.abs(hit.u - u);
+    gap = Math.min(gap, this.totalLength - gap);
+    return gap > 40 && hit.distance < this.halfWidth + margin;
+  }
+
+  /**
+   * Tiny vertical bias so the two arms of a crossover are never coplanar. One smooth cycle per
+   * lap means no step at the start/finish line, and a couple of centimetres is invisible to the
+   * player — the physics ground plane is flat regardless.
+   */
+  surfaceBias(u: number): number {
+    return this.def.crossover ? Math.sin((u / this.totalLength) * Math.PI * 2) * 0.016 : 0;
   }
 }

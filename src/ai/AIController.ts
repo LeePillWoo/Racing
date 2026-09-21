@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { TrackPath, ROAD_HALF_WIDTH } from "../track/TrackPath";
+import { TrackPath } from "../track/TrackPath";
 import { RacingLine } from "./RacingLine";
 import type { InputState } from "../core/InputManager";
 import type { Racer } from "../race/RaceManager";
@@ -123,9 +123,10 @@ const AVOID_HALF_WIDTH = 3.3;
 const MAX_AVOID_OFFSET = 5.2;
 /**
  * Ceiling on the racing line, weave and avoidance offsets *combined*. Each is individually sane
- * but they stack, and without this the aimed-at point can sit beyond the kerb.
+ * but they stack, and without this the aimed-at point can sit beyond the kerb. Derived from the
+ * circuit's own width so a narrow arena does not get grand-prix-sized excursions.
  */
-const MAX_TRACK_OFFSET = ROAD_HALF_WIDTH - 1.8;
+const maxTrackOffset = (path: TrackPath): number => path.halfWidth - 1.8;
 /** Car-following: chassis length, the gap to hold behind a car, and how hard to chase that gap. */
 const CAR_LENGTH = 4.4;
 const DESIRED_GAP = 4;
@@ -283,8 +284,9 @@ export class AIController {
     // be held inside the track. Avoidance is budgeted first and the racing line gets the room
     // that is left: clipping them together instead would cancel exactly the dodge a car needs in
     // a corner, where the line is already out at the edge.
-    const avoid = clamp(avoidOffset, -MAX_TRACK_OFFSET, MAX_TRACK_OFFSET);
-    const lineRoom = MAX_TRACK_OFFSET - Math.abs(avoid);
+    const maxOffset = maxTrackOffset(this.path);
+    const avoid = clamp(avoidOffset, -maxOffset, maxOffset);
+    const lineRoom = maxOffset - Math.abs(avoid);
     const weave = Math.sin(u * 0.011 + personality.laneSeed) * personality.laneAmplitude;
     // The bias rides on the racing line's own excursion, so it always pushes wider or flatter
     // relative to the corner rather than blindly to one side of the road.
@@ -359,7 +361,7 @@ export class AIController {
     // Cars that wedge into each other keep rolling at a few m/s while flat out, so a
     // speed-near-zero test never catches them; compare against what the car is asking for.
     const pinned = throttle > 0.5 && speedMs < targetSpeed * PINNED_SPEED_FRACTION;
-    if (halted || pinned || distanceFromCenter > 11.5) {
+    if (halted || pinned || distanceFromCenter > this.path.halfWidth + 2.5) {
       this.stuckTimer += dt;
       if (this.stuckTimer > (halted ? 2.5 : PINNED_SECONDS)) {
         this.stuckTimer = 0;

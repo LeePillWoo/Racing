@@ -23,10 +23,12 @@ page.on("console", message => {
 try {
   await page.goto("http://127.0.0.1:5173/");
   await page.locator("#start-button").waitFor({ state: "visible", timeout: 60000 });
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(600);
+  assert.equal(await page.locator(".track-card").count(), 3, "the grid should offer three circuits");
+  assert.equal(await page.locator(".track-card.selected").count(), 1);
   await page.screenshot({ path: "artifacts/start-desktop.png" });
   await page.locator("#start-button").click();
-  await page.waitForFunction(() => window.__racing.countdown === 0);
+  await page.waitForFunction(() => window.__racing && window.__racing.countdown === 0, null, { timeout: 90000 });
   await page.waitForTimeout(150);
   await page.screenshot({ path: "artifacts/race-desktop.png" });
   await page.keyboard.down("KeyW"); await page.waitForFunction(() => window.__racing.playerVehicle.telemetry.forwardSpeedMs > 8, { timeout: 20000 }); await page.keyboard.up("KeyW");
@@ -86,7 +88,7 @@ try {
   await mobile.locator("#start-button").waitFor({ state: "visible", timeout: 60000 });
   await mobile.locator("#start-button").tap();
   await mobile.locator(".touch-controls").waitFor({ state: "visible" });
-  await mobile.waitForFunction(() => window.__racing.countdown === 0);
+  await mobile.waitForFunction(() => window.__racing && window.__racing.countdown === 0, null, { timeout: 90000 });
   const gasBox = await mobile.locator('[data-control="KeyW"]').boundingBox();
   const leftBox = await mobile.locator('[data-control="KeyA"]').boundingBox();
   const session = await mobileContext.newCDPSession(mobile);
@@ -111,6 +113,32 @@ try {
   await mobile.screenshot({ path: "artifacts/race-touch.png" });
   await mobileContext.close();
 
-  console.log(JSON.stringify({ errors, warnings, speed, diagnostics, touch: "passed" }, null, 2));
+  // Race a lap of each new circuit for real: a layout can pass the geometry tests and still
+  // break in the browser (missing kerbs, a barrier across the crossover, a scenery crash).
+  const tours = {};
+  for (const id of ["switchback-park", "infinity-drift"]) {
+    const tour = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    tour.on("pageerror", error => errors.push(id + ": " + error.message));
+    tour.on("console", message => { if (message.type() === "error") errors.push(id + ": " + message.text()); });
+    await tour.goto("http://127.0.0.1:5173/");
+    await tour.locator(`.track-card[data-track="${id}"]`).click();
+    await tour.locator("#start-button").click();
+    await tour.waitForFunction(() => window.__racing && window.__racing.countdown === 0, null, { timeout: 90000 });
+    await tour.keyboard.down("KeyW");
+    await tour.waitForTimeout(6000);
+    await tour.keyboard.up("KeyW");
+    tours[id] = await tour.evaluate(() => ({
+      track: window.__racing.track.id,
+      halfWidth: window.__racing.path.halfWidth,
+      laps: window.__racing.track.laps,
+      offTrack: window.__racing.path.projectPoint(window.__racing.playerVehicle.position()).distance,
+      drawCalls: window.__racing.renderer.info.render.calls,
+    }));
+    assert.equal(tours[id].track, id, "the picked circuit must be the one that loads");
+    await tour.screenshot({ path: `artifacts/track-${id}.png` });
+    await tour.close();
+  }
+
+  console.log(JSON.stringify({ errors, warnings, speed, diagnostics, tours, touch: "passed" }, null, 2));
   assert.deepEqual(errors, []);
 } finally { await browser.close(); }

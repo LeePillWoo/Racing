@@ -615,4 +615,75 @@ check("stronger boost lifts the nose while rear tyres remain planted and settles
   assert.ok(Math.abs(car.meshes.wheels[0].getWorldPosition(new THREE.Vector3()).y - car.meshes.wheels[2].getWorldPosition(new THREE.Vector3()).y) < 0.02);
   physics.world.free();
 });
+// Every circuit in the catalogue has to be geometry a car can actually get round: no corner
+// tighter than the car can turn, and no barrier standing on somebody else's asphalt. The
+// figure-eight only works because the crossover suppresses the walls that would seal it shut.
+const { TRACKS } = await import("../src/track/TrackCatalog.ts");
+const { barrierSegments, BARRIER_STEP } = await import("../src/track/RoadMesh.ts");
+const layouts = TRACKS.map(def => {
+  const trackPath = new TrackPath(def);
+  const samples = trackPath.getSamplePoints();
+  const spacing = trackPath.totalLength / samples.length;
+  const step = Math.max(1, Math.round(6 / spacing));
+  let minRadius = Infinity;
+  for (let i = 0; i < samples.length; i++) {
+    const a = samples[(i - step + samples.length) % samples.length];
+    const b = samples[i];
+    const c = samples[(i + step) % samples.length];
+    const ab = a.distanceTo(b), bc = b.distanceTo(c), ac = a.distanceTo(c);
+    const cross = (b.x - a.x) * (c.z - b.z) - (b.z - a.z) * (c.x - b.x);
+    if (Math.abs(cross) > 1e-9) minRadius = Math.min(minRadius, (ab * bc * ac) / (2 * Math.abs(cross)));
+  }
+  const walls = barrierSegments(trackPath);
+  const full = 2 * Math.ceil(trackPath.totalLength / BARRIER_STEP);
+  let onRoad = 0;
+  for (const { a, b } of walls) {
+    if (trackPath.projectPoint(a).distance < def.halfWidth || trackPath.projectPoint(b).distance < def.halfWidth) onRoad++;
+  }
+  return { def, path: trackPath, minRadius, walls: walls.length, full, onRoad };
+});
+console.log(JSON.stringify(layouts.map(l => ({ id: l.def.id, length: Math.round(l.path.totalLength),
+  minRadius: +l.minRadius.toFixed(1), walls: l.walls, full: l.full }))));
+check("every catalogued circuit is drivable and never walls itself shut", () => {
+  for (const layout of layouts) {
+    assert.ok(layout.minRadius > 20, layout.def.id + " has a " + layout.minRadius.toFixed(1) + "m corner");
+    assert.equal(layout.onRoad, 0, layout.def.id + " puts " + layout.onRoad + " barrier segments on its own road");
+    if (layout.def.crossover) {
+      assert.ok(layout.walls < layout.full, layout.def.id + " must open its barrier at the crossover");
+    } else {
+      assert.equal(layout.walls, layout.full, layout.def.id + " dropped barriers it should have kept");
+    }
+  }
+});
+// The decisive check: an AI car actually completes a lap of each new layout with the walls in place.
+for (const layout of layouts.filter(l => l.def.id !== TRACKS[0].id)) {
+  const trackPhysics = new PhysicsWorld(rapier);
+  buildGroundCollider(rapier, trackPhysics.world, layout.path);
+  const line = new RacingLine(layout.path);
+  const gridFrame = layout.path.frameAtDistance(-12);
+  gridFrame.point.y = DEFAULT_VEHICLE_CONFIG.spawnHeight;
+  const trackCar = new Vehicle(rapier, trackPhysics.world, new THREE.Scene(), gridFrame.point,
+    Math.atan2(gridFrame.tangent.x, gridFrame.tangent.z), "#fff");
+  const trackRace = new RaceManager(layout.path, 1);
+  const trackRacer = trackRace.addRacer("ai", "AI", false, trackCar, "#fff");
+  let resets = 0;
+  const driver = new AIController(layout.path, line, trackRacer, randomAIPersonality(2), trackRace.racers,
+    r => { resets++; trackRace.resetRacerToTrack(r); });
+  let frames = 0;
+  for (; frames < 60 * 240 && trackRacer.highestLapFloor < 1; frames++) {
+    const input = driver.sample(1 / 60);
+    trackPhysics.step(1 / 60, dt => trackCar.physicsStep(dt, input));
+    trackRace.update(1000 / 60);
+  }
+  const seconds = frames / 60;
+  console.log(JSON.stringify({ id: layout.def.id, lap: trackRacer.highestLapFloor, resets,
+    seconds: +seconds.toFixed(1), avgKmh: +((layout.path.totalLength / seconds) * 3.6).toFixed(1) }));
+  check("AI laps " + layout.def.id + " cleanly", () => {
+    assert.equal(trackRacer.highestLapFloor, 1, "never completed a lap");
+    assert.ok(resets <= 2, "needed " + resets + " recoveries");
+    assert.ok(layout.path.totalLength / seconds > 18, "crawled round at " + (layout.path.totalLength / seconds).toFixed(1) + " m/s");
+  });
+  trackPhysics.world.free();
+}
+
 console.log("Completed " + checks.length + " regression checks.");
