@@ -702,36 +702,68 @@ check("small knocks and being shoved along do no damage at all", () => {
   assert.deepEqual(model.register(0, 40, -40, FORWARD, RIGHT, false), []);
   assert.equal(model.worstCorner, 0);
 });
-check("a square hit spreads across an axle and costs the wing, not a wheel", () => {
+// The rule the whole model hangs on: however hard a single impact is, it can only ever work a
+// part loose. Anything else and one unlucky touch of a barrier ends the race.
+check("no single impact, however violent, can detach a part", () => {
+  for (const speedLost of [DEFAULT_DAMAGE.fullImpactMs, 40, 200]) {
+    for (const boosting of [false, true]) {
+      for (const [dx, dz] of [[0, 1], [-Math.SQRT1_2, Math.SQRT1_2], [1, 0], [0, -1]]) {
+        const model = new DamageModel();
+        const broken = hitFrom(model, dx, dz, speedLost, boosting);
+        assert.deepEqual(broken, [], `one ${speedLost} m/s hit from (${dx},${dz}) boost=${boosting} detached ${broken}`);
+        assert.equal(model.broken.size, 0);
+      }
+    }
+  }
+  assert.ok(DEFAULT_DAMAGE.maxSeverity < DEFAULT_DAMAGE.wheelBreak, "the ceiling must sit under the break point");
+  assert.ok(DEFAULT_DAMAGE.maxSeverity < DEFAULT_DAMAGE.wingBreak);
+});
+check("a square hit works the front loose across both corners, sparing the rear", () => {
   const model = new DamageModel();
-  const broken = hitFrom(model, 0, 1, DEFAULT_DAMAGE.fullImpactMs);
+  hitFrom(model, 0, 1, DEFAULT_DAMAGE.fullImpactMs);
   assert.ok(Math.abs(model.corners[0] - model.corners[1]) < 1e-9, "both front corners must share it");
   assert.ok(model.corners[2] === 0 && model.corners[3] === 0, "the rear must be untouched");
-  assert.deepEqual(broken, ["front-wing"], "one square hit takes the wing but leaves the wheels on");
+  assert.equal(model.isLoose("front-wing"), true, "a big nose-on hit should bend the wing");
+  assert.equal(model.isLoose("rear-wing"), false);
+  assert.equal(model.has("front-wing"), false, "but not tear it off");
 });
-check("the same hit taken on one corner rips that wheel off", () => {
+check("a second hit on the same corner is what finally tears the wheel off", () => {
   const model = new DamageModel();
   // Front-left in chassis terms: wheel 0 sits at -X, +Z.
-  const broken = hitFrom(model, -Math.SQRT1_2, Math.SQRT1_2, DEFAULT_DAMAGE.fullImpactMs);
-  assert.ok(broken.includes("wheel-0"), "expected the struck corner to lose its wheel: " + broken);
-  assert.equal(model.corners[1], 0, "the far corner must be untouched");
-  assert.ok(model.has("wheel-0") && !model.has("wheel-3"));
+  const corner = [-Math.SQRT1_2, Math.SQRT1_2];
+  assert.deepEqual(hitFrom(model, corner[0], corner[1], DEFAULT_DAMAGE.fullImpactMs), []);
+  assert.equal(model.isLoose("wheel-0"), true, "the first hit has to leave a visible warning");
+  let broken = [];
+  for (let hit = 0; hit < 4 && !model.has("wheel-0"); hit++) {
+    broken = hitFrom(model, corner[0], corner[1], DEFAULT_DAMAGE.fullImpactMs);
+  }
+  assert.ok(model.has("wheel-0"), "repeated hits on one corner must eventually take the wheel");
+  assert.ok(broken.includes("wheel-0"));
+  assert.equal(model.isLoose("wheel-0"), false, "a wheel that has gone is not merely loose");
+  assert.equal(model.corners[1], 0, "the far corner must still be untouched");
+  assert.ok(!model.has("wheel-3"));
 });
-check("boost turns a survivable shunt into a broken wheel", () => {
+check("boost makes the same shunt hurt more", () => {
   const speedLost = DEFAULT_DAMAGE.minImpactMs +
-    (DEFAULT_DAMAGE.fullImpactMs - DEFAULT_DAMAGE.minImpactMs) * 0.7;
+    (DEFAULT_DAMAGE.fullImpactMs - DEFAULT_DAMAGE.minImpactMs) * 0.5;
   const lifted = new DamageModel();
-  assert.deepEqual(hitFrom(lifted, -Math.SQRT1_2, Math.SQRT1_2, speedLost).filter(p => p.startsWith("wheel")), []);
+  hitFrom(lifted, -Math.SQRT1_2, Math.SQRT1_2, speedLost);
   const boosted = new DamageModel();
-  assert.ok(hitFrom(boosted, -Math.SQRT1_2, Math.SQRT1_2, speedLost, true).includes("wheel-0"));
-  assert.ok(boosted.corners[0] > lifted.corners[0] * 1.5);
+  hitFrom(boosted, -Math.SQRT1_2, Math.SQRT1_2, speedLost, true);
+  assert.ok(boosted.corners[0] > lifted.corners[0] * 1.5,
+    "boost should multiply the damage: " + boosted.corners[0] + " vs " + lifted.corners[0]);
+  assert.equal(lifted.isLoose("wheel-0"), false, "a half-speed shunt off boost should not even bend it");
+  assert.equal(boosted.isLoose("wheel-0"), true, "the same shunt on boost should");
 });
-check("damage clears on repair", () => {
+check("damage and its loose parts clear on repair", () => {
   const model = new DamageModel();
-  hitFrom(model, 0, 1, 40);
+  for (let i = 0; i < 4; i++) hitFrom(model, 0, 1, 40);
   assert.ok(model.broken.size > 0);
+  assert.ok(model.isLoose("wheel-0") || model.has("wheel-0"));
   model.reset();
   assert.equal(model.broken.size, 0);
+  assert.equal(model.isLoose("wheel-0"), false);
+  assert.equal(model.isLoose("front-wing"), false);
   assert.equal(model.worstCorner, 0);
 });
 
@@ -754,14 +786,16 @@ function crashIntoWall(entrySpeed, yawDeg) {
     car.syncVisuals();
     released += car.consumeBrokenParts().length;
   }
-  const result = { released, broken: [...car.damage.broken].sort(), worst: +car.damage.worstCorner.toFixed(2) };
+  const parts = ["wheel-0", "wheel-1", "wheel-2", "wheel-3", "front-wing", "rear-wing"];
+  const result = { released, broken: [...car.damage.broken].sort(),
+    loose: parts.filter(p => car.damage.isLoose(p)), worst: +car.damage.worstCorner.toFixed(2) };
   world.world.free();
   return result;
 }
 const bigCrash = crashIntoWall(38, 0);
-const nudge = crashIntoWall(6, 0);
+const nudge = crashIntoWall(10, 0);
 /** The same crash against the real circuit barrier, aimed so one front corner arrives first. */
-function crashIntoBarrierAt(entrySpeed, yawOffsetDeg) {
+function crashIntoBarrierAt(entrySpeed, yawOffsetDeg, runs = 1) {
   const world = new PhysicsWorld(rapier);
   buildGroundCollider(rapier, world.world, path);
   const frame = path.frameAtDistance(200);
@@ -769,30 +803,48 @@ function crashIntoBarrierAt(entrySpeed, yawOffsetDeg) {
   spawn.y = DEFAULT_VEHICLE_CONFIG.spawnHeight;
   const yaw = Math.atan2(frame.tangent.x, frame.tangent.z) + (yawOffsetDeg * Math.PI) / 180;
   const car = new Vehicle(rapier, world.world, new THREE.Scene(), spawn, yaw, "#fff");
-  for (let i = 0; i < 120; i++) world.step(1 / 120, dt => car.physicsStep(dt, idle));
-  car.body.setLinvel({ x: Math.sin(yaw) * entrySpeed, y: 0, z: Math.cos(yaw) * entrySpeed }, true);
   let released = 0;
-  for (let i = 0; i < 3 * 120; i++) {
-    world.step(1 / 120, dt => car.physicsStep(dt, idle));
-    car.syncVisuals();
-    released += car.consumeBrokenParts().length;
+  for (let run = 0; run < runs; run++) {
+    // Put the car back on the spot and send it in again, without repairing what is already bent.
+    car.body.setTranslation({ x: spawn.x, y: spawn.y, z: spawn.z }, true);
+    car.body.setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) }, true);
+    car.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    car.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    for (let i = 0; i < 120; i++) world.step(1 / 120, dt => car.physicsStep(dt, idle));
+    car.body.setLinvel({ x: Math.sin(yaw) * entrySpeed, y: 0, z: Math.cos(yaw) * entrySpeed }, true);
+    for (let i = 0; i < 3 * 120; i++) {
+      world.step(1 / 120, dt => car.physicsStep(dt, idle));
+      car.syncVisuals();
+      released += car.consumeBrokenParts().length;
+    }
   }
-  const result = { released, broken: [...car.damage.broken].sort(), worst: +car.damage.worstCorner.toFixed(2) };
+  const parts = ["wheel-0", "wheel-1", "wheel-2", "wheel-3", "front-wing", "rear-wing"];
+  const result = { released, broken: [...car.damage.broken].sort(),
+    loose: parts.filter(p => car.damage.isLoose(p)), worst: +car.damage.worstCorner.toFixed(2) };
   world.world.free();
   return result;
 }
 const cornerCrash = crashIntoBarrierAt(52, 58);
-console.log(JSON.stringify({ bigCrash, nudge, cornerCrash }));
-check("a big shunt breaks the car, a slow nudge does not", () => {
-  assert.ok(bigCrash.broken.includes("front-wing"), "a 137 km/h nose-on hit must at least take the wing: " + JSON.stringify(bigCrash));
-  assert.equal(bigCrash.released, bigCrash.broken.length, "every broken part must come loose exactly once");
-  assert.deepEqual(nudge.broken, [], "a 22 km/h bump must leave the car intact: " + JSON.stringify(nudge));
-  assert.ok(!bigCrash.broken.some(p => p.startsWith("wheel")),
-    "a square nose-on hit spreads across both front corners, so the wheels should survive it");
-  // Clipping the same wall with one corner instead concentrates everything there.
-  assert.ok(cornerCrash.broken.some(p => p.startsWith("wheel")),
-    "a corner-on hit at 187 km/h must tear a wheel off: " + JSON.stringify(cornerCrash));
-  assert.equal(cornerCrash.released, cornerCrash.broken.length);
+const repeatedCorner = crashIntoBarrierAt(52, 58, 3);
+console.log(JSON.stringify({ bigCrash, nudge, cornerCrash, repeatedCorner }));
+check("one shunt bends the car, repeated shunts break it, a slow nudge does neither", () => {
+  assert.deepEqual(nudge.broken, [], "a 36 km/h bump must leave the car intact: " + JSON.stringify(nudge));
+  assert.equal(nudge.loose.length, 0, "and must not even bend it: " + JSON.stringify(nudge));
+
+  assert.deepEqual(bigCrash.broken, [], "a single 137 km/h hit must not detach anything: " + JSON.stringify(bigCrash));
+  assert.ok(bigCrash.loose.length > 0, "but it has to bend something: " + JSON.stringify(bigCrash));
+  assert.deepEqual(cornerCrash.broken, [], "nor should one corner-on hit: " + JSON.stringify(cornerCrash));
+  assert.ok(cornerCrash.loose.some(p => p.startsWith("wheel")),
+    "a corner-on hit should leave that wheel hanging: " + JSON.stringify(cornerCrash));
+
+  // Go back into the same barrier three times and the corner finally lets go.
+  assert.ok(repeatedCorner.broken.length > 0,
+    "three runs into the barrier must break something: " + JSON.stringify(repeatedCorner));
+  assert.equal(repeatedCorner.released, repeatedCorner.broken.length,
+    "every broken part must come loose exactly once");
+  for (const part of repeatedCorner.broken) {
+    assert.ok(!repeatedCorner.loose.includes(part), part + " cannot be both loose and gone");
+  }
 });
 const cruise = (() => {
   const world = new PhysicsWorld(rapier);
@@ -831,7 +883,7 @@ check("a wheel that has come off stops driving and stops gripping", () => {
   assert.equal(car.damage.broken.size, 0, "a reset must put the car back together");
   // Break both driven wheels outright, then ask for the same three seconds of full throttle.
   // deltaV along +Z throws the car forward, so the blow came from behind and lands on the rear.
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 4; i++) {
     car.damage.register(0, 40, 40, new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), false);
   }
   assert.ok(car.damage.has("wheel-2") && car.damage.has("wheel-3"), [...car.damage.broken].join(","));

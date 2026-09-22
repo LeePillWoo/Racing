@@ -215,15 +215,18 @@ export class HUD {
   private renderDamage(model: DamageModel): void {
     let worst = 0;
     for (let i = 0; i < 4; i++) {
-      const value = Math.min(1, model.corners[i]);
+      const value = model.cornerFraction(i);
       worst = Math.max(worst, value);
       const pip = this.damagePips[i];
       pip.style.opacity = String(0.25 + value * 0.75);
       pip.classList.toggle("hurt", value > 0.15);
+      pip.classList.toggle("loose", model.isLoose(WHEEL_PARTS[i]));
       pip.classList.toggle("gone", model.has(WHEEL_PARTS[i]));
     }
-    this.damageWings[0].classList.toggle("gone", model.has("front-wing"));
-    this.damageWings[1].classList.toggle("gone", model.has("rear-wing"));
+    for (const [index, part] of ([[0, "front-wing"], [1, "rear-wing"]] as const)) {
+      this.damageWings[index].classList.toggle("loose", model.isLoose(part));
+      this.damageWings[index].classList.toggle("gone", model.has(part));
+    }
     const percent = Math.round(worst * 100);
     if (percent !== this.lastDamagePercent) {
       this.lastDamagePercent = percent;

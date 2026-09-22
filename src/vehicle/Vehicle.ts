@@ -7,7 +7,7 @@ import { DriftSystem } from "./DriftSystem";
 import { findWallContact } from "./WallBounce";
 import { buildCarMesh, CarMeshSet } from "./CarMesh";
 import { CarModel, DEFAULT_CAR } from "./CarCatalog";
-import { BROKEN_WHEEL_GRIP, BROKEN_WING_GRIP, CarPart, DamageModel, WHEEL_PARTS } from "./Damage";
+import { BROKEN_WHEEL_GRIP, BROKEN_WING_GRIP, CarPart, DamageModel, LOOSE_WHEEL_GRIP, LOOSE_WING_GRIP, WHEEL_PARTS } from "./Damage";
 import { clamp, damp, lerp, smoothstep } from "../utils/MathUtils";
 import type { InputState } from "../core/InputManager";
 
@@ -98,6 +98,8 @@ export class Vehicle {
   }));
   private currentSteerAngle = 0;
   private visualPitch = 0;
+  /** Drives the shake of anything hanging off the car. Advances with simulated time, not frames. */
+  private visualClock = 0;
   private readonly wheelSpin = [0, 0, 0, 0];
   private readonly previousWheelSpin = [0, 0, 0, 0];
   private lastTelemetry: VehicleTelemetry = { ...IDLE_TELEMETRY };
@@ -258,6 +260,7 @@ export class Vehicle {
     const deltaVz = incoming.z - this.previousVelocityZ;
     const speedLost = Math.hypot(this.previousVelocityX, this.previousVelocityZ) - Math.hypot(incoming.x, incoming.z);
     this.wallRecoveryTime = Math.max(0, this.wallRecoveryTime - dt);
+    this.visualClock += dt;
     this.applyWallResponse();
     if (this.wallRecoveryTime > 0) {
       const angularVelocity = this.body.angvel();
@@ -322,8 +325,10 @@ export class Vehicle {
       // Friction coefficient, not constraint stiffness: this caps how much lateral force the
       // tyre can make, so exceeding it lets the wheel slide progressively instead of the
       // all-or-nothing behaviour the stiffness parameter gives.
-      const wingLoss = this.damage.has(isFront ? "front-wing" : "rear-wing") ? BROKEN_WING_GRIP : 1;
-      const hubLoss = this.damage.has(WHEEL_PARTS[i]) ? BROKEN_WHEEL_GRIP : 1;
+      const wing: CarPart = isFront ? "front-wing" : "rear-wing";
+      const wingLoss = this.damage.has(wing) ? BROKEN_WING_GRIP : this.damage.isLoose(wing) ? LOOSE_WING_GRIP : 1;
+      const hubLoss = this.damage.has(WHEEL_PARTS[i]) ? BROKEN_WHEEL_GRIP
+        : this.damage.isLoose(WHEEL_PARTS[i]) ? LOOSE_WHEEL_GRIP : 1;
       this.controller.setWheelFrictionSlip(i, axleFriction * gripMultiplier * handbrakeMul * wingLoss * hubLoss);
 
       if (isRear) maxRearSlip = Math.max(maxRearSlip, Math.abs(slipAngle));
@@ -503,6 +508,10 @@ export class Vehicle {
   /** Puts every broken part back on the car and clears the damage. */
   repair(): void {
     this.damage.reset();
+    this.meshes.frontWing.rotation.set(0, 0, 0);
+    this.meshes.rearWing.rotation.set(0, 0, 0);
+    this.meshes.frontWing.position.set(0, 0, 0);
+    this.meshes.rearWing.position.set(0, 0, 0);
     this.pendingBreaks.length = 0;
     this.detachedParts.length = 0;
     this.meshes.frontWing.visible = true;
@@ -539,7 +548,30 @@ export class Vehicle {
       const spin = this.wheelSpin[i];
       const qSteer = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), steer);
       const qSpin = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), spin);
-      wheelMesh.quaternion.copy(qSteer).multiply(qSpin);
+      // A wheel hanging off its hub sits cambered, sagged and shaking. It is the warning that the
+      // next hit on this corner takes it off altogether, so it has to be visible from the cockpit.
+      if (this.damage.isLoose(WHEEL_PARTS[i])) {
+        const side = i % 2 === 0 ? -1 : 1;
+        const shake = Math.sin(this.visualClock * 21 + i * 2.2) * 0.055;
+        wheelMesh.position.y -= 0.055;
+        wheelMesh.position.x += side * 0.07;
+        const qCamber = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), side * (0.2 + shake));
+        wheelMesh.quaternion.copy(qCamber).multiply(qSteer).multiply(qSpin);
+      } else {
+        wheelMesh.quaternion.copy(qSteer).multiply(qSpin);
+      }
+    }
+
+    // A bent wing droops on one side and trails. Reset every frame so a repair straightens it.
+    for (const [part, group] of [["front-wing", this.meshes.frontWing], ["rear-wing", this.meshes.rearWing]] as const) {
+      if (this.damage.isLoose(part)) {
+        const shake = Math.sin(this.visualClock * 13 + (part === "front-wing" ? 0 : 1.7)) * 0.03;
+        group.rotation.set(-0.16 + shake, 0, 0.13 + shake);
+        group.position.set(0.04, -0.06, 0);
+      } else {
+        group.rotation.set(0, 0, 0);
+        group.position.set(0, 0, 0);
+      }
     }
 
     for (const bl of this.meshes.brakeLights) {

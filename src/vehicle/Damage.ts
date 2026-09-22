@@ -5,10 +5,14 @@ import * as THREE from "three";
  * which is the one signal that covers walls, kerbs and other cars without a second contact query
  * and without touching the rebound the solver and WallBounce already agree on.
  *
- * Where the hit landed decides what breaks. The impact direction is resolved into the four corners
- * of the car, so a square nose-on shunt splits its energy between both front corners and mostly
- * costs you the front wing, while clipping a barrier with one corner concentrates everything there
- * and rips that wheel off. Boost makes whatever you hit hurt more.
+ * Where the hit landed decides what suffers. The impact direction is resolved into the four corners
+ * of the car, so a square nose-on shunt splits its energy between both front corners while clipping
+ * a barrier with one corner concentrates everything there. Boost makes whatever you hit hurt more.
+ *
+ * Damage arrives in two stages. A part first works loose — a wheel sits cambered and shakes, a wing
+ * droops and drags — and only a later hit tears it off. One impact can never do both: the ceiling on
+ * a single hit is deliberately below the threshold that detaches anything, so no one loses a wheel
+ * to a single touch and there is always a warning stage to drive carefully on.
  */
 
 export interface DamageConfig {
@@ -18,21 +22,30 @@ export interface DamageConfig {
   fullImpactMs: number;
   /** Multiplies damage taken while the boost is lit. */
   boostMultiplier: number;
-  /** Corner damage at which that wheel leaves the car. */
+  /** Corner damage at which that wheel starts hanging off its hub. */
+  wheelLoose: number;
+  /** Corner damage at which that wheel leaves the car for good. */
   wheelBreak: number;
+  /** Mean damage across an axle's two corners at which that wing starts dragging. */
+  wingLoose: number;
   /** Mean damage across an axle's two corners at which that wing lets go. */
   wingBreak: number;
-  /** Ceiling on one impact, so a single freak step cannot destroy the whole car. */
+  /**
+   * Ceiling on one impact. Must stay below every break threshold: that is what guarantees a part
+   * cannot go from intact to gone in a single hit, however hard the hit was.
+   */
   maxSeverity: number;
 }
 
 export const DEFAULT_DAMAGE: DamageConfig = {
-  minImpactMs: 4.5,
+  minImpactMs: 7,
   fullImpactMs: 17,
   boostMultiplier: 1.8,
-  wheelBreak: 1,
-  wingBreak: 0.62,
-  maxSeverity: 1.35,
+  wheelLoose: 0.55,
+  wheelBreak: 1.6,
+  wingLoose: 0.45,
+  wingBreak: 1.2,
+  maxSeverity: 1,
 };
 
 export type CarPart = "wheel-0" | "wheel-1" | "wheel-2" | "wheel-3" | "front-wing" | "rear-wing";
@@ -53,6 +66,7 @@ export class DamageModel {
   /** Accumulated damage per corner, 0 = pristine. Unbounded above the break threshold. */
   readonly corners = [0, 0, 0, 0];
   private readonly brokenParts = new Set<CarPart>();
+  private readonly looseParts = new Set<CarPart>();
   /** Severity of the most recent impact that did any damage, for the caller's crash effects. */
   lastImpact = 0;
 
@@ -66,9 +80,26 @@ export class DamageModel {
     return this.brokenParts.has(part);
   }
 
-  /** Worst corner damage, 0..1+, for a damage readout. */
+  /** True while a part is hanging on but no longer straight. A detached part is not loose. */
+  isLoose(part: CarPart): boolean {
+    return this.looseParts.has(part) && !this.brokenParts.has(part);
+  }
+
+  /** Worst corner damage, 0..1+, in raw units. */
   get worstCorner(): number {
     return Math.max(...this.corners);
+  }
+
+  /**
+   * How far a corner is toward losing its wheel, 0..1. This, not the raw figure, is what a gauge
+   * should show: 100% has to mean "the next hit here takes it off", not an arbitrary unit.
+   */
+  cornerFraction(index: number): number {
+    return Math.min(1, this.corners[index] / this.config.wheelBreak);
+  }
+
+  get worstFraction(): number {
+    return Math.max(...this.corners.map((_, i) => this.cornerFraction(i)));
   }
 
   /**
@@ -92,8 +123,11 @@ export class DamageModel {
     const magnitude = Math.hypot(deltaVx, deltaVz);
     if (speedLost <= config.minImpactMs || magnitude < 1e-6) return [];
     let severity = (speedLost - config.minImpactMs) / (config.fullImpactMs - config.minImpactMs);
-    severity = Math.min(severity, config.maxSeverity);
     if (boosting) severity *= config.boostMultiplier;
+    // Clamped last, so the ceiling is a real ceiling. Clamping before the boost let a boosted
+    // nose-on hit reach 1.98 and tear the wing off in one go, which is the whole thing this
+    // ceiling exists to prevent.
+    severity = Math.min(severity, config.maxSeverity);
     this.lastImpact = severity;
 
     // The car is thrown along deltaV, so the blow arrived from the opposite direction.
@@ -108,14 +142,20 @@ export class DamageModel {
       if (share <= 0) continue;
       this.corners[i] += severity * share;
       const wheel = WHEEL_PARTS[i];
+      if (this.corners[i] >= config.wheelLoose) this.looseParts.add(wheel);
       if (this.corners[i] >= config.wheelBreak && !this.brokenParts.has(wheel)) {
         this.brokenParts.add(wheel);
         broken.push(wheel);
       }
     }
-    for (const [part, a, b] of [["front-wing", 0, 1], ["rear-wing", 2, 3]] as const) {
+    for (const [part, a, b, loose, gone] of [
+      ["front-wing", 0, 1, config.wingLoose, config.wingBreak],
+      ["rear-wing", 2, 3, config.wingLoose, config.wingBreak],
+    ] as const) {
       if (this.brokenParts.has(part)) continue;
-      if ((this.corners[a] + this.corners[b]) / 2 >= config.wingBreak) {
+      const axle = (this.corners[a] + this.corners[b]) / 2;
+      if (axle >= loose) this.looseParts.add(part);
+      if (axle >= gone) {
         this.brokenParts.add(part);
         broken.push(part);
       }
@@ -126,11 +166,16 @@ export class DamageModel {
   reset(): void {
     this.corners.fill(0);
     this.brokenParts.clear();
+    this.looseParts.clear();
     this.lastImpact = 0;
   }
 }
 
 /** Grip a corner keeps once its wheel is gone: the car is dragging a bare hub along the road. */
 export const BROKEN_WHEEL_GRIP = 0.09;
+/** Grip a corner keeps while its wheel is only hanging loose — enough to limp, not to race. */
+export const LOOSE_WHEEL_GRIP = 0.55;
 /** Grip an axle keeps once its wing has been torn off. */
 export const BROKEN_WING_GRIP = 0.88;
+/** Grip an axle keeps while its wing is bent and dragging. */
+export const LOOSE_WING_GRIP = 0.95;

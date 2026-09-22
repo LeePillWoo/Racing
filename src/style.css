@@ -91,11 +91,14 @@ body:has(.finish-overlay) .hud-layer{opacity:1}
 .hud-damage.critical b{color:#ff6a4c}
 .damage-car{display:flex;flex-direction:column;align-items:center;gap:3px}
 .damage-wing{width:44px;height:4px;border-radius:2px;background:#9fd8ff88}
-.damage-wing.gone{background:#ff5a3c;opacity:.35;box-shadow:none}
+.damage-wing.loose{background:#ff8a3c;transform:rotate(-4deg)}
+.damage-wing.gone{background:#ff5a3c;opacity:.35;box-shadow:none;transform:none}
 .damage-shell{display:grid;grid-template-columns:repeat(2,1fr);gap:5px 22px;padding:7px 6px;border:1px solid #cfe4f544;border-radius:5px}
 .damage-shell i{width:9px;height:13px;border-radius:2px;background:#7fe08a;display:block}
 .damage-shell i.hurt{background:#ffc94a}
-.damage-shell i.gone{background:transparent;border:1px solid #ff5a3c;opacity:1!important}
+.damage-shell i.loose{background:#ff8a3c;box-shadow:0 0 7px #ff8a3c88;animation:dmg-shake .5s infinite}
+.damage-shell i.gone{background:transparent;border:1px solid #ff5a3c;opacity:1!important;animation:none}
+@keyframes dmg-shake{0%,100%{transform:translateX(-1px)}50%{transform:translateX(1px)}}
 .standing-row{display:flex;gap:10px;align-items:center;padding:4px 4px;font-size:10px;letter-spacing:.8px;border-bottom:1px solid #ffffff09}
 .standing-rank{width:20px;opacity:.6}
 .standing-name{flex:1}

@@ -79,19 +79,53 @@ try {
   await page.keyboard.up("Space"); await page.keyboard.up("KeyD"); await page.keyboard.up("KeyW");
   // Crash the car into a barrier on purpose and check that parts actually leave it on screen.
   // Point the car at the barrier, let the suspension settle so it is not launched over the wall,
-  // then fire it in at 150 km/h.
+  // then fire it in at 150 km/h. Damage comes in two stages, so this takes two runs at the wall.
   await page.evaluate(() => {
     const g = window.__racing;
     const frame = g.path.frameAtDistance(200);
     frame.point.y = 0;
-    window.__crashYaw = Math.atan2(frame.tangent.x, frame.tangent.z) + Math.PI / 2;
+    window.__crashYaw = Math.atan2(frame.tangent.x, frame.tangent.z) + Math.PI * 0.32;
+    window.__crashAt = { x: frame.point.x, y: g.playerVehicle.config.spawnHeight, z: frame.point.z };
+    // Put the car on the spot without repairing whatever is already bent.
+    window.__aimAtWall = () => {
+      const yaw = window.__crashYaw, body = g.playerVehicle.body;
+      body.setTranslation(window.__crashAt, true);
+      body.setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) }, true);
+      body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    };
+    window.__fireAtWall = () => {
+      const yaw = window.__crashYaw;
+      g.playerVehicle.body.setLinvel({ x: Math.sin(yaw) * 48, y: 0, z: Math.cos(yaw) * 48 }, true);
+    };
     g.playerVehicle.resetTo(frame.point, window.__crashYaw);
   });
   await page.waitForTimeout(700);
-  await page.evaluate(() => {
-    const yaw = window.__crashYaw;
-    window.__racing.playerVehicle.body.setLinvel({ x: Math.sin(yaw) * 42, y: 0, z: Math.cos(yaw) * 42 }, true);
-  });
+  await page.evaluate(() => window.__fireAtWall());
+  await page.waitForFunction(() => window.__racing.playerVehicle.damage.worstCorner > 0.55, null, { timeout: 20000 });
+  await page.waitForTimeout(400);
+  const bent = await page.evaluate(() => ({
+    broken: window.__racing.playerVehicle.telemetry.brokenParts,
+    debris: window.__racing.debris.count,
+    wingVisible: window.__racing.playerVehicle.meshes.frontWing.visible,
+    looseMarkers: document.querySelectorAll('[data-el="damage"] .loose').length,
+    readout: document.querySelector('[data-el="damagepct"]').textContent,
+  }));
+  assert.equal(bent.broken, 0, "one hit must only bend the car, never detach: " + JSON.stringify(bent));
+  assert.equal(bent.debris, 0, "nothing should have come off yet: " + JSON.stringify(bent));
+  assert.equal(bent.wingVisible, true);
+  assert.ok(bent.looseMarkers > 0, "the panel must warn that something is hanging: " + JSON.stringify(bent));
+  assert.notEqual(bent.readout, "0%");
+  await page.screenshot({ path: "artifacts/crash-bent.png" });
+
+  // Back into the same barrier: the second hit is the one that tears parts off.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (await page.evaluate(() => window.__racing.playerVehicle.telemetry.brokenParts > 0)) break;
+    await page.evaluate(() => window.__aimAtWall());
+    await page.waitForTimeout(500);
+    await page.evaluate(() => window.__fireAtWall());
+    await page.waitForTimeout(2500);
+  }
   await page.waitForFunction(() => window.__racing.playerVehicle.telemetry.brokenParts > 0, null, { timeout: 15000 });
   await page.waitForTimeout(500);
   await page.screenshot({ path: "artifacts/crash-damage.png" });
@@ -104,6 +138,7 @@ try {
     readout: document.querySelector('[data-el="damagepct"]').textContent,
     critical: document.querySelector('[data-el="damage"]').classList.contains("critical"),
     goneMarkers: document.querySelectorAll('[data-el="damage"] .gone').length,
+    stillLoose: [...document.querySelectorAll('[data-el="damage"] .gone')].filter(e => e.classList.contains("loose")).length,
   }));
   assert.ok(crash.broken > 0, "a 150 km/h barrier hit should break something: " + JSON.stringify(crash));
   assert.ok(crash.debris > 0, "broken parts must appear as debris in the scene: " + JSON.stringify(crash));
@@ -111,6 +146,7 @@ try {
   assert.notEqual(crash.readout, "0%", "the damage panel must report the hit: " + JSON.stringify(crash));
   assert.equal(crash.critical, true, "a wrecked car should light the panel up");
   assert.ok(crash.goneMarkers > 0, "the panel must mark the parts that have gone");
+  assert.equal(crash.stillLoose, 0, "a part that has gone must stop being marked as merely loose");
   await page.keyboard.press("KeyR");
   await page.waitForTimeout(400);
   const repaired = await page.evaluate(() => ({
@@ -118,11 +154,15 @@ try {
     wingVisible: window.__racing.playerVehicle.meshes.frontWing.visible,
     readout: document.querySelector('[data-el="damagepct"]').textContent,
     goneMarkers: document.querySelectorAll('[data-el="damage"] .gone').length,
+    looseMarkers: document.querySelectorAll('[data-el="damage"] .loose').length,
+    wingStraight: window.__racing.playerVehicle.meshes.frontWing.rotation.z === 0,
   }));
   assert.equal(repaired.broken, 0, "the R recovery must put the car back together");
   assert.equal(repaired.wingVisible, true);
   assert.equal(repaired.readout, "0%", "a repaired car must read zero damage");
   assert.equal(repaired.goneMarkers, 0);
+  assert.equal(repaired.looseMarkers, 0);
+  assert.equal(repaired.wingStraight, true, "a repair must straighten a bent wing, not just re-show it");
 
   const diagnostics = await page.evaluate(() => ({
     cars: window.__racing.raceManager.racers.length,
@@ -264,6 +304,6 @@ try {
   assert.ok(await menuPage.locator("#start-button").isVisible());
   await menuPage.close();
 
-  console.log(JSON.stringify({ errors, warnings, speed, crash, diagnostics, tours, menu: "passed", touch: "passed" }, null, 2));
+  console.log(JSON.stringify({ errors, warnings, speed, bent, crash, diagnostics, tours, menu: "passed", touch: "passed" }, null, 2));
   assert.deepEqual(errors, []);
 } finally { await browser.close(); }
