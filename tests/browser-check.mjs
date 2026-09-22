@@ -153,15 +153,42 @@ try {
   await mobile.locator("#start-button").tap();
   await mobile.locator(".touch-controls").waitFor({ state: "visible" });
   await mobile.waitForFunction(() => window.__racing && window.__racing.countdown === 0, null, { timeout: 90000 });
+  assert.equal(await mobile.locator('[data-control="KeyA"]').count(), 0, "the arrow keys gave way to the steering pad");
   const gasBox = await mobile.locator('[data-control="KeyW"]').boundingBox();
-  const leftBox = await mobile.locator('[data-control="KeyA"]').boundingBox();
+  const padBox = await mobile.locator("[data-steer-pad]").boundingBox();
+  const padX = padBox.x + padBox.width / 2, padY = padBox.y + padBox.height * 0.6;
   const session = await mobileContext.newCDPSession(mobile);
+  // Throttle under one thumb, steering under the other: both have to work at the same time.
   await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [
     { x: gasBox.x + gasBox.width / 2, y: gasBox.y + gasBox.height / 2, id: 1 },
-    { x: leftBox.x + leftBox.width / 2, y: leftBox.y + leftBox.height / 2, id: 2 },
+    { x: padX, y: padY, id: 2 },
   ]});
-  const held = await mobile.evaluate(() => window.__racing.input.sample());
-  assert.equal(held.throttle, 1); assert.equal(held.steer, -1);
+  const resting = await mobile.evaluate(() => window.__racing.input.sample());
+  assert.equal(resting.throttle, 1, "the GO button must hold throttle while the other thumb steers");
+  assert.equal(resting.steer, 0, "a thumb that has not moved yet is dead centre");
+  // Steering is proportional: a short drag is a small input, not full lock.
+  await session.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [
+    { x: gasBox.x + gasBox.width / 2, y: gasBox.y + gasBox.height / 2, id: 1 },
+    { x: padX - 26, y: padY, id: 2 },
+  ]});
+  // CDP dispatch and the renderer are not in lockstep, so wait for the value rather than read once.
+  await mobile.waitForFunction(() => {
+    const s = window.__racing.input.sample().steer;
+    return s < -0.05 && s > -0.95;
+  }, null, { timeout: 8000 }).catch(async () => {
+    throw new Error("a short drag should be a partial input, got " +
+      await mobile.evaluate(() => window.__racing.input.sample().steer));
+  });
+  await session.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [
+    { x: gasBox.x + gasBox.width / 2, y: gasBox.y + gasBox.height / 2, id: 1 },
+    { x: padBox.x + padBox.width - 6, y: padY, id: 2 },
+  ]});
+  await mobile.waitForFunction(() => window.__racing.input.sample().steer === 1, null, { timeout: 8000 })
+    .catch(async () => {
+      throw new Error("dragging to the far edge of the pad should be full lock, got " +
+        await mobile.evaluate(() => window.__racing.input.sample().steer));
+    });
+  assert.equal(await mobile.evaluate(() => document.querySelector("[data-steer-pad]").classList.contains("active")), true);
   const driftBox = await mobile.locator('[data-control="Space"]').boundingBox();
   await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [
     { x: driftBox.x + driftBox.width / 2, y: driftBox.y + driftBox.height / 2, id: 3 },
@@ -170,6 +197,25 @@ try {
   await session.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
   const released = await mobile.evaluate(() => window.__racing.input.sample());
   assert.equal(released.throttle, 0); assert.equal(released.steer, 0);
+  assert.equal(await mobile.evaluate(() => document.querySelector("[data-steer-pad]").classList.contains("active")), false);
+  // Nothing may overflow or overlap once the HUD has to share the screen with a thumb band.
+  const fit = await mobile.evaluate(() => {
+    const rect = (sel) => { const el = document.querySelector(sel); return el && el.getBoundingClientRect(); };
+    const overlaps = (a, b) => a && b && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    const left = rect(".hud-left"), right = rect(".hud-right"), bottom = rect(".hud-bottom");
+    const drive = rect(".drive-pad");
+    return {
+      scrollX: document.documentElement.scrollWidth > innerWidth,
+      leftHitsRight: overlaps(left, right),
+      leftHitsBottom: overlaps(left, bottom),
+      rightHitsBottom: overlaps(right, bottom),
+      bottomHitsButtons: overlaps(bottom, drive),
+      offScreen: [left, right, bottom].some(r => r && (r.right > innerWidth + 1 || r.bottom > innerHeight + 1 || r.left < -1)),
+    };
+  });
+  assert.deepEqual(fit, { scrollX: false, leftHitsRight: false, leftHitsBottom: false,
+    rightHitsBottom: false, bottomHitsButtons: false, offScreen: false },
+    "the racing HUD must not collide with itself or run off a phone screen: " + JSON.stringify(fit));
   assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await mobile.locator("#pause-button").tap();
   await mobile.locator("#resume-button").waitFor({ state: "visible" });

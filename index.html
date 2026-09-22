@@ -2,7 +2,7 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#122339" />
     <title>APEX — Formula Circuit</title>
   </head>
@@ -23,7 +23,7 @@
       <div id="start-screen">
         <div class="start-card">
           <div class="eyebrow"><span class="live-dot"></span> GRAND PRIX / ROUND 01</div>
-          <h1>CHASE<br>THE <span>APEX.</span></h1>
+          <h1>CHASE <br>THE <span>APEX.</span></h1>
           <p class="start-description" id="track-blurb">마지막 그리드에서 시작하는 당신의 그랑프리.<br>12대의 포뮬러, 선두를 향해 달리세요.</p>
           <div class="pick-label">코스</div>
           <div class="track-select" id="track-select" role="radiogroup" aria-label="코스 선택"></div>
@@ -44,8 +44,16 @@
         <div class="finish-card"><div class="eyebrow">TAKE A BREATH</div><h2>일시정지</h2><p>준비되면 레이스를 이어가세요.</p><div class="pause-actions"><button id="resume-button">레이스 계속 ↗</button><button id="menu-button">메인 화면으로</button></div></div>
       </div>
       <div class="touch-controls" aria-label="터치 주행 조작">
-        <div><button data-control="KeyA" aria-label="왼쪽 조향">◀</button><button data-control="KeyD" aria-label="오른쪽 조향">▶</button></div>
-        <div><button data-control="Space" aria-label="드리프트">DRIFT</button><button data-control="ShiftLeft" aria-label="부스터">BOOST</button><button data-control="KeyS" aria-label="브레이크 및 후진">BRAKE</button><button data-control="KeyW" aria-label="가속">GO</button></div>
+        <div class="steer-pad" data-steer-pad role="slider" aria-label="조향 패드" aria-valuemin="-1" aria-valuemax="1" aria-valuenow="0">
+          <div class="steer-knob"><span class="steer-thumb"></span></div>
+          <span class="steer-hint">끌어서 조향</span>
+        </div>
+        <div class="drive-pad">
+          <button data-control="Space" aria-label="드리프트">DRIFT</button>
+          <button data-control="ShiftLeft" aria-label="부스터">BOOST</button>
+          <button data-control="KeyS" aria-label="브레이크 및 후진">BRAKE</button>
+          <button data-control="KeyW" class="go" aria-label="가속">GO</button>
+        </div>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

@@ -65,14 +65,25 @@ kbd{font:inherit;font-size:9px;border:1px solid #a8bbce50;padding:2px 5px;border
 .racing .hud-layer{opacity:1}
 body:has(.finish-overlay) .hud-layer{opacity:1}
 .hud-panel{background:rgba(12,28,45,.78);border:1px solid #e4f2ff20;border-radius:3px;padding:12px 16px;backdrop-filter:blur(8px)}
-.hud-top-left{position:absolute;top:87px;left:34px}
+/*
+ * Panels live in containers pinned to the screen edges and flow inside them, rather than each
+ * sitting at its own hardcoded offset. On a short landscape phone the old fixed offsets put the
+ * minimap on top of the lap timer and the standings through the speedometer; a column cannot
+ * overlap itself, so the whole class of collisions goes away and only sizes need tuning.
+ */
+.hud-layer{--hud-gap:9px;--hud-edge:22px;--hud-top:78px;--hud-bottom:22px}
+.hud-col{position:absolute;top:calc(var(--hud-top) + env(safe-area-inset-top));display:flex;flex-direction:column;gap:var(--hud-gap);max-height:calc(100% - var(--hud-top) - var(--hud-bottom) - 150px);overflow:hidden}
+.hud-left{left:calc(var(--hud-edge) + env(safe-area-inset-left));align-items:flex-start}
+.hud-right{right:calc(var(--hud-edge) + env(safe-area-inset-right));align-items:flex-end}
+.hud-bottom{position:absolute;bottom:calc(var(--hud-bottom) + env(safe-area-inset-bottom));left:calc(var(--hud-edge) + env(safe-area-inset-left));right:calc(var(--hud-edge) + env(safe-area-inset-right));display:flex;align-items:flex-end;justify-content:space-between;gap:12px;pointer-events:none}
+.hud-bottom-stack{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
 .hud-laptime{font-size:24px;font-weight:700}
 .label{font-size:9px;font-weight:600;letter-spacing:2px;color:#afc1d2;display:block;margin-bottom:5px}
 .hud-sublap{font-size:10px;font-weight:500;letter-spacing:1px;color:#b7c8d6;margin-top:7px}
 .hud-lapcount{position:absolute;top:27px;left:50%;transform:translateX(-50%);font-size:13px;font-weight:700;letter-spacing:2px;padding:12px 22px}
-.hud-position{position:absolute;top:182px;left:34px;font-size:36px;font-weight:900;color:#e5f34b;min-width:155px;border-left:3px solid #e5f34b}
-.hud-standings{position:absolute;top:87px;right:28px;min-width:160px;padding:12px}
-.hud-damage{position:absolute;top:262px;left:34px;min-width:155px;padding:10px 12px;opacity:.72;transition:opacity .2s,border-color .2s}
+.hud-position{font-size:36px;font-weight:900;color:#e5f34b;min-width:155px;border-left:3px solid #e5f34b}
+.hud-standings{min-width:160px;padding:12px;overflow:hidden}
+.hud-damage{min-width:155px;padding:10px 12px;opacity:.72;transition:opacity .2s,border-color .2s}
 .hud-damage.scratched{opacity:1}
 .hud-damage.critical{border-color:#ff5a3c99;box-shadow:0 0 12px #ff5a3c33}
 .hud-damage .label{margin-bottom:8px}
@@ -89,7 +100,6 @@ body:has(.finish-overlay) .hud-layer{opacity:1}
 .standing-rank{width:20px;opacity:.6}
 .standing-name{flex:1}
 .standing-row.is-player{color:#e5f34b;background:#e5f34b12;font-weight:800}
-.hud-bottom-right{position:absolute;bottom:24px;left:30px;right:30px;display:flex;align-items:flex-end;justify-content:space-between;pointer-events:none}
 .minimap-wrap{width:154px;height:154px;background:#0c1c2db0;border:1px solid #e4f2ff20;border-radius:3px;overflow:hidden}
 .minimap-wrap canvas{width:100%;height:100%;display:block}
 .speedo{position:relative;width:165px;height:165px;border-radius:50%;background:radial-gradient(circle,#102337db,#10233770 63%,transparent 65%);text-shadow:0 2px 6px #0006}
@@ -102,7 +112,7 @@ body:has(.finish-overlay) .hud-layer{opacity:1}
 .tach{width:150px;height:7px;background:#0c1c2dcc;border:1px solid #e4f2ff20;border-radius:4px;overflow:hidden}
 .tach-fill{height:100%;width:0;background:linear-gradient(90deg,#32bfe5,#e5f34b 60%,#ff5a3c 90%)}
 .tach.redline{border-color:#ff5a3c;box-shadow:0 0 9px #ff5a3c66}
-.drift-stack{position:absolute;bottom:214px;right:58px;display:flex;flex-direction:column;align-items:flex-end;gap:4px;pointer-events:none}
+.drift-stack{display:flex;flex-direction:column;align-items:flex-end;gap:4px;pointer-events:none}
 .drift-indicator{text-align:right;color:#e5f34b;opacity:0;transition:opacity .12s}
 .drift-indicator.active{opacity:1}
 .drift-headline{font-size:12px;font-weight:900;letter-spacing:3px}
@@ -126,31 +136,90 @@ body:has(.finish-overlay) .hud-layer{opacity:1}
 .finish-card p{font-size:12px;color:#b7c8d6}
 .finish-card .eyebrow{justify-content:center}
 #finish-restart{margin-top:22px}
-.touch-controls{display:none;position:absolute;bottom:16px;left:16px;right:16px;justify-content:space-between;pointer-events:none}
-.touch-controls>div{display:flex;gap:8px}
-.touch-controls button{pointer-events:auto;touch-action:none;background:#132941bb;border:1px solid #ffffff40;border-radius:6px;color:white;min-width:54px;height:54px;font-weight:800;font-size:11px}
-.touch-controls button[data-control="KeyW"]{background:#e5f34b;color:#122339}
+.touch-controls{--btn:clamp(56px,14vmin,92px);display:none;position:absolute;inset:auto 0 0 0;height:min(48%,250px);
+  padding:0 calc(16px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+  justify-content:space-between;align-items:flex-end;pointer-events:none}
+/* Press anywhere in the pad and drag: the knob springs up under whichever thumb landed. */
+.steer-pad{position:relative;flex:0 0 44%;height:100%;pointer-events:auto;touch-action:none;border-radius:16px}
+.steer-knob{position:absolute;left:var(--knob-x,50%);top:var(--knob-y,50%);width:var(--btn);height:var(--btn);margin:calc(var(--btn) / -2) 0 0 calc(var(--btn) / -2);border-radius:50%;border:2px solid #e5f34b66;background:#0c1c2d7a;opacity:0;transition:opacity .12s}
+.steer-pad.active .steer-knob{opacity:1}
+.steer-thumb{position:absolute;left:50%;top:50%;width:46%;height:46%;border-radius:50%;background:#e5f34b;box-shadow:0 0 14px #e5f34b66;transform:translate(-50%,-50%) translateX(calc(var(--steer,0) * 0.52 * var(--btn)))}
+.steer-hint{position:absolute;left:14px;bottom:10px;font-size:10px;letter-spacing:1.6px;color:#dbe8f5aa;pointer-events:none;transition:opacity .2s}
+.steer-pad.active .steer-hint{opacity:0}
+.drive-pad{display:grid;grid-template-columns:auto auto;gap:10px;align-items:end;justify-items:end;pointer-events:none}
+.drive-pad button{pointer-events:auto;touch-action:none;background:#132941cc;border:1px solid #ffffff40;border-radius:16px;color:white;width:var(--btn);height:var(--btn);font-weight:800;font-size:11px}
+.drive-pad button:active{background:#1d3e5fee;border-color:#e5f34b}
+.drive-pad .go{grid-column:2;width:calc(var(--btn) * 1.32);height:calc(var(--btn) * 1.32);border-radius:50%;background:#e5f34b;color:#122339;font-size:14px}
 @media(max-width:700px){
 .race-brand{top:18px;left:18px;font-size:15px}.race-brand>span:last-child{display:none}
 #start-screen{padding:70px 7vw;background:linear-gradient(90deg,#0a192beb,#0a192b65)}
 .start-card h1{font-size:70px;margin:22px 0 16px}.start-description{font-size:12px}.race-specs{margin:16px 0 20px;gap:26px}
 .track-select{gap:8px;margin:16px 0 2px}.track-card{padding:8px 8px 10px}.track-name{font-size:10px}.track-sub{font-size:7px}
 .start-footer{font-size:7px}.start-footer>span:last-child{display:none}
-.hud-top-left{top:70px;left:14px}.hud-panel{padding:9px 11px}.hud-laptime{font-size:18px}.hud-sublap{font-size:8px}
-.hud-position{top:148px;left:14px;min-width:120px;font-size:29px}
-.hud-lapcount{top:20px;padding:9px 11px;font-size:10px;letter-spacing:1px}
-.hud-standings{right:14px;top:70px;min-width:113px}.standing-row{font-size:8px;padding:3px}
-.hud-damage{left:14px;top:214px;min-width:120px;padding:8px}.race-actions .btn-label{display:none}
+.hud-layer{--hud-edge:12px;--hud-top:62px;--hud-bottom:14px;--hud-gap:7px}
+.hud-panel{padding:9px 11px}.hud-laptime{font-size:18px}.hud-sublap{font-size:8px}
+.hud-position{min-width:110px;font-size:26px}
+.hud-lapcount{top:18px;padding:8px 12px;font-size:10px;letter-spacing:1px}
+.hud-standings{min-width:108px;padding:9px}.standing-row{font-size:8px;padding:2px 3px}
+.hud-damage{min-width:110px;padding:8px}.race-actions .btn-label{display:none}
 .race-actions button{padding:9px 10px}
-.hud-bottom-right{left:14px;right:14px;bottom:22px}.minimap-wrap{width:110px;height:110px}.speedo{width:135px;height:135px}
-.tach{width:122px}.drift-stack{bottom:180px;right:16px}.boost-bar{width:110px}.drift-score{font-size:20px}
+.minimap-wrap{width:104px;height:104px}.speedo{width:124px;height:124px}
+.tach{width:112px}.boost-bar{width:104px}.drift-score{font-size:19px}
 .speedo-value{font-size:34px}.speedo-gear{bottom:19px}.race-actions{top:18px;right:14px}
 .race-actions button{padding:8px}.race-actions #reset-button{display:none}
 }
-@media(pointer:coarse){.racing .touch-controls{display:flex}.hud-bottom-right{bottom:90px}.drift-stack{bottom:248px}}
+/* With a thumb band across the bottom, the minimap and speedometer move up out of its way. */
+@media(pointer:coarse){.racing .touch-controls{display:flex}
+.hud-layer{--hud-bottom:calc(min(48%,250px) + 10px)}
+.minimap-wrap{width:clamp(74px,13vmin,120px);height:clamp(74px,13vmin,120px)}
+.speedo{width:clamp(96px,17vmin,150px);height:clamp(96px,17vmin,150px)}
+.tach{width:clamp(88px,15vmin,136px)}.boost-bar{width:clamp(84px,15vmin,128px)}}
 @media(max-height:680px){.track-thumb{display:none}.track-select{margin:14px 0 2px}}
-@media(max-height:600px){.start-card h1{font-size:54px;margin:18px 0}.race-specs{margin:12px 0 16px}.controls-help{gap:5px;margin-top:12px}.start-description{margin:8px 0}.start-footer{display:none}.hud-standings .standing-row:nth-child(n+7){display:none}}
+@media(max-height:600px){.start-card h1{font-size:54px;margin:18px 0}.race-specs{margin:12px 0 16px}.controls-help{gap:5px;margin-top:12px}.start-description{margin:8px 0}.start-footer{display:none}}
+/*
+ * A landscape phone is about 390 px tall, and a column of panels down each side simply does not
+ * fit beside a thumb band. The left column lies down into a row across the top instead, and the
+ * minimap and speedometer move to the gap in the middle that neither thumb reaches.
+ */
+@media(max-height:520px){
+.hud-layer{--hud-top:52px;--hud-gap:6px;--hud-edge:10px}
+.hud-left{flex-direction:row;align-items:flex-start}
+.hud-laptime{font-size:15px}.hud-sublap{display:none}
+.hud-position{font-size:20px;min-width:66px;border-left-width:2px}
+.hud-panel{padding:6px 9px}.hud-damage .label{margin-bottom:4px}
+.damage-shell{gap:4px 16px;padding:5px 5px}.damage-shell i{width:8px;height:10px}.damage-wing{width:36px}
+.hud-standings{min-width:94px;padding:7px}
+.race-brand{top:12px;left:12px;font-size:14px}.race-brand>span:last-child{display:none}
+.race-actions{top:11px;right:10px}.fps-counter{display:none}
+.drift-headline{font-size:10px}.drift-score{font-size:16px}.boost-label{font-size:8px;margin-bottom:3px}
+}
+/* Landing screen on a landscape phone: the headline has to give up most of its height so the
+   pickers and the start button all fit without scrolling for them. */
+@media(max-height:520px){
+#start-screen{padding:14px 5vw;align-items:flex-start}
+.start-card{padding:0;max-width:none}
+.start-card h1{font-size:26px;letter-spacing:-1px;line-height:1;margin:6px 0 8px}
+.start-card h1 br{display:none}
+.start-description{display:none}
+.eyebrow{font-size:9px;letter-spacing:1.6px}
+.pick-label{margin:9px 0 4px}
+.track-select{gap:6px}.track-card{padding:6px 8px}.track-name{font-size:9px}.track-sub{font-size:7px}
+.car-select{gap:5px}.car-card{padding:4px 3px 5px}.car-thumb{aspect-ratio:2.6;margin-bottom:2px}
+.race-specs{display:none}
+#start-button{width:240px;padding:11px 18px;font-size:13px;margin-top:10px}
+.controls-help{display:none}
+}
+/* A wide-but-short screen can take the whole garage in one row, which saves a whole card height. */
+@media(max-height:520px) and (min-width:660px){.car-select{grid-template-columns:repeat(8,1fr)}}
+@media(pointer:coarse) and (max-height:520px){
+.hud-layer{--hud-bottom:10px}
+.hud-bottom{left:50%;right:auto;transform:translateX(-50%);justify-content:center;align-items:flex-end;gap:10px}
+.minimap-wrap{width:72px;height:72px}
+.speedo{width:94px;height:94px}.speedo-value{font-size:24px}.speedo-unit{font-size:7px;margin-top:2px}
+.speedo-gear{bottom:12px;font-size:10px}.tach{width:86px;height:5px}.boost-bar{width:86px}
+}
 
 .boost-label{font-size:10px;color:#ffcc83;letter-spacing:1px;margin-bottom:5px}
 .touch-controls button[data-control="ShiftLeft"]{background:#ed7832;color:#fff}
-@media(max-width:420px){.touch-controls{left:8px;right:8px}.touch-controls>div{gap:4px}.touch-controls button{min-width:44px}}
+@media(max-width:430px){.touch-controls{--btn:clamp(52px,17vmin,76px)}.steer-pad{flex-basis:40%}}
+.standing-gap{text-align:center;font-size:9px;letter-spacing:2px;color:#ffffff55;padding:1px 0}

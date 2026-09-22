@@ -28,6 +28,32 @@ export interface HUDUpdateData {
   dt: number;
 }
 
+/**
+ * How many standings rows the screen can spare. A landscape phone is barely 390 px tall and a full
+ * twelve-row board would run off the bottom and through the speedometer.
+ */
+function standingsCapacity(): number {
+  const height = window.innerHeight;
+  if (height < 520) return 4;
+  // A touch device gives up the bottom half of the screen to the thumb band, and the speedometer
+  // stack sits above that again, so the board has far less room than the window height suggests.
+  const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+  const band = coarse ? Math.min(height * 0.48, 250) + 10 : 0;
+  const usable = height - 78 - band - 250;
+  return Math.max(3, Math.min(12, Math.floor((usable - 44) / 24)));
+}
+
+/**
+ * The leaders, and your own row wherever it sits, with a marker for the cars skipped between.
+ * Losing sight of your own position is the one thing a shortened board must not do.
+ */
+function visibleStandings(standings: Racer[], capacity: number): (Racer | null)[] {
+  if (standings.length <= capacity) return standings;
+  const playerIndex = standings.findIndex(r => r.isPlayer);
+  if (playerIndex < capacity) return standings.slice(0, capacity);
+  return [...standings.slice(0, capacity - 2), null, standings[playerIndex]];
+}
+
 export class HUD {
   private readonly root: HTMLElement;
   private readonly speedo = new Speedometer();
@@ -60,15 +86,14 @@ export class HUD {
     this.root = document.createElement("div");
     this.root.className = "hud-layer";
     this.root.innerHTML = `
-      <div class="hud-top-left">
+      <div class="hud-col hud-left">
         <div class="hud-panel hud-laptime">
           <span class="label">LAP TIME</span>
           <span data-el="laptime">0:00.000</span>
           <div class="hud-sublap" data-el="bestlap">BEST --:--.---</div>
         </div>
-      </div>
-      <div class="hud-panel hud-lapcount" data-el="lapcount">LAP 1 / 3</div>
-      <div class="hud-panel hud-damage" data-el="damage">
+        <div class="hud-panel hud-position" data-el="position">1<span style="font-size:0.9rem;opacity:0.6"> / 6</span></div>
+        <div class="hud-panel hud-damage" data-el="damage">
         <span class="label">DAMAGE <b data-el="damagepct">0%</b></span>
         <div class="damage-car">
           <div class="damage-wing" data-el="dmg-front"></div>
@@ -78,13 +103,19 @@ export class HUD {
           </div>
           <div class="damage-wing" data-el="dmg-rear"></div>
         </div>
+        </div>
       </div>
-      <div class="hud-panel hud-standings">
-        <span class="label">STANDINGS</span>
-        <div data-el="standings"></div>
+      <div class="hud-panel hud-lapcount" data-el="lapcount">LAP 1 / 3</div>
+      <div class="hud-col hud-right">
+        <div class="hud-panel hud-standings">
+          <span class="label">STANDINGS</span>
+          <div data-el="standings"></div>
+        </div>
       </div>
-      <div class="hud-panel hud-position" data-el="position">1<span style="font-size:0.9rem;opacity:0.6"> / 6</span></div>
-      <div class="drift-stack">
+      <div class="hud-bottom">
+        <div class="minimap-wrap" data-el="minimap-slot"></div>
+        <div class="hud-bottom-stack">
+        <div class="drift-stack">
         <div class="drift-indicator" data-el="drift">
           <div class="drift-headline">DRIFT <span data-el="driftchain">x1</span></div>
           <div class="drift-score" data-el="driftscore">0</div>
@@ -93,8 +124,6 @@ export class HUD {
         <div class="boost-label">SHIFT / BOOST</div>
         <div class="boost-bar" data-el="boost"><div class="boost-fill" data-el="boostfill"></div></div>
       </div>
-      <div class="hud-bottom-right">
-        <div class="minimap-wrap" data-el="minimap-slot"></div>
         <div class="speedo-stack">
           <div class="tach" data-el="tach"><div class="tach-fill" data-el="tachfill"></div></div>
           <div class="speedo" data-el="speedo-slot">
@@ -104,6 +133,7 @@ export class HUD {
               <div class="speedo-gear" data-el="gear">N</div>
             </div>
           </div>
+        </div>
         </div>
       </div>
       <div class="fps-counter" data-el="fps">60 FPS</div>
@@ -163,18 +193,18 @@ export class HUD {
     this.boostEl.classList.toggle("active", data.boosting);
     this.boostFillEl.style.width = `${Math.round(Math.min(1, boostFraction) * 100)}%`;
 
-    const signature = data.standings.map(r => r.id + ":" + r.rank).join("|");
+    const rows = visibleStandings(data.standings, standingsCapacity());
+    const signature = rows.map(r => (r ? r.id + ":" + r.rank : "gap")).join("|");
     if (signature !== this.standingsSignature) {
-    this.standingsSignature = signature;
-    this.standingsEl.innerHTML = data.standings
-      .map(
-        (r) =>
-          `<div class="standing-row ${r.isPlayer ? "is-player" : ""}">
+      this.standingsSignature = signature;
+      this.standingsEl.innerHTML = rows
+        .map(r => r === null
+          ? `<div class="standing-gap">···</div>`
+          : `<div class="standing-row ${r.isPlayer ? "is-player" : ""}">
             <span class="standing-rank">${r.rank}</span>
             <span class="standing-name">${r.name}</span>
-          </div>`
-      )
-      .join("");
+          </div>`)
+        .join("");
     }
 
     this.renderDamage(data.damage);
