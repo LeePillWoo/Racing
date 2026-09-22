@@ -45,8 +45,11 @@ try {
   await page.locator("#resume-button").click();
   await page.keyboard.press("KeyR");
   await page.waitForTimeout(300);
-  await page.keyboard.down("KeyS"); await page.waitForTimeout(1800); await page.keyboard.up("KeyS");
-  assert.ok(await page.evaluate(() => window.__racing.playerVehicle.telemetry.forwardSpeedMs < -1));
+  // Wait for the car to actually be reversing rather than for a stopwatch: a slow machine
+  // simulates less time per frame, and a fixed sleep then fails for no reason worth failing over.
+  await page.keyboard.down("KeyS");
+  await page.waitForFunction(() => window.__racing.playerVehicle.telemetry.forwardSpeedMs < -1, null, { timeout: 40000 });
+  await page.keyboard.up("KeyS");
   await page.keyboard.press("KeyC");
   await page.waitForTimeout(200);
   await page.keyboard.press("KeyC");
@@ -124,6 +127,8 @@ try {
   const diagnostics = await page.evaluate(() => ({
     cars: window.__racing.raceManager.racers.length,
     playerCar: window.__racing.playerVehicle.car.id,
+    reflectionProbe: !!window.__racing.scene.environment,
+    environmentIntensity: window.__racing.scene.environmentIntensity,
     shells: [...new Set(window.__racing.aiEntries.map(e => e.vehicle.car.style))].sort(),
     playerShellOnGrid: window.__racing.aiEntries.filter(e => e.vehicle.car.id === window.__racing.playerVehicle.car.id).length,
     drawCalls: window.__racing.renderer.info.render.calls,
@@ -132,6 +137,8 @@ try {
   }));
   assert.equal(diagnostics.cars, 12);
   assert.equal(diagnostics.playerCar, "hornet-v8", "the picked car must be the one you drive");
+  assert.equal(diagnostics.reflectionProbe, true, "the sky has to be baked into a reflection probe");
+  assert.ok(diagnostics.environmentIntensity > 0);
   assert.ok(diagnostics.shells.length >= 3, "the grid must field a mixed set of shells: " + diagnostics.shells);
   assert.equal(diagnostics.playerShellOnGrid, 0, "no opponent should be driving your exact car");
   await page.setViewportSize({ width: 640, height: 1138 });

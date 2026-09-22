@@ -103,7 +103,7 @@ export class Game {
     this.scene.add(this.debris.group);
     buildGroundCollider(rapier, this.physics.world, this.path);
     onProgress(0.45, "관중석과 서킷 환경 구성 중");
-    this.environment = buildEnvironment(this.scene, this.path);
+    this.environment = buildEnvironment(this.scene, this.path, this.renderer);
     onProgress(0.65, "12대의 포뮬러 차량 준비 중");
     const OPPONENT_SHELLS = CARS.filter(model => model.id !== this.car.id);
     const grid = this.buildStartGrid(12);

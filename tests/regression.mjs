@@ -863,8 +863,37 @@ check("every car in the garage builds its own shell, with wings that can come of
     else assert.equal(triangles, previous, model.id + " should build the same shell as its stablemate");
   }
   assert.equal(trianglesByStyle.size, 4, "the garage should cover every shell");
+  for (const triangles of trianglesByStyle.values()) {
+    assert.ok(triangles > 7000, "shells should carry real detail, got " + triangles + " triangles");
+  }
   assert.equal(new Set(trianglesByStyle.values()).size, 4, "each shell must really be a different model");
   console.log(JSON.stringify({ shellTriangles: Object.fromEntries(trianglesByStyle) }));
+});
+
+check("sprayed panels are lacquered and glossy while rubber and carbon stay matte", () => {
+  const mesh = buildCarMesh(DEFAULT_VEHICLE_CONFIG, CARS[0].paint, CARS[0].style);
+  const materials = new Map();
+  mesh.root.traverse(o => { if (o.isMesh) materials.set(o.material.uuid, o.material); });
+  for (const wheel of mesh.wheels) wheel.traverse(o => { if (o.isMesh) materials.set(o.material.uuid, o.material); });
+  const all = [...materials.values()];
+  const paint = mesh.bodyMaterial;
+  assert.equal(paint.type, "MeshPhysicalMaterial", "body paint needs a clearcoat layer");
+  assert.equal(paint.clearcoat, 1);
+  assert.ok(paint.clearcoatRoughness <= 0.06, "the lacquer has to be polished: " + paint.clearcoatRoughness);
+  assert.ok(paint.envMapIntensity >= 1, "paint must pick up the reflection probe");
+  // The pigment coat stays matte enough to keep its colour; only the lacquer shines.
+  assert.ok(paint.roughness > 0.3, "a mirror-smooth pigment coat washes the colour out");
+
+  const matte = all.filter(m => m.roughness >= 0.9);
+  assert.ok(matte.length >= 2, "rubber and carbon must both be matte, found " + matte.length);
+  for (const m of matte) {
+    assert.ok(m.metalness <= 0.1, "matte surfaces must not be metallic");
+    assert.ok(m.envMapIntensity <= 0.3, "matte surfaces must barely reflect: " + m.envMapIntensity);
+    assert.ok(!m.clearcoat, "rubber and moulded trim carry no lacquer");
+  }
+  const polished = all.filter(m => m.metalness >= 0.9 && m.roughness <= 0.3);
+  assert.ok(polished.length >= 2, "chrome and glass should both be polished metal, found " + polished.length);
+  console.log(JSON.stringify({ materials: all.length, matte: matte.length, polished: polished.length }));
 });
 
 const { Debris } = await import("../src/vfx/Debris.ts");

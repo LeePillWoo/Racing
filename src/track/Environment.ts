@@ -10,6 +10,9 @@ export interface EnvironmentHandles {
   followSun(target: THREE.Vector3): void;
 }
 
+/** Where the sun sits. Shared by the light itself and by the reflection probe it has to match. */
+const SUN_DIRECTION = new THREE.Vector3(-0.45, 0.85, -0.3).normalize();
+
 function random(seed: number): () => number {
   return () => { seed = (Math.imul(seed, 1664525) + 1013904223) | 0; return (seed >>> 0) / 4294967296; };
 }
@@ -114,7 +117,7 @@ function patchMaterial(kind: GroundPatch["kind"]): THREE.MeshStandardMaterial {
   return pushBack(new THREE.MeshStandardMaterial({ map, roughness: 1 }), 4);
 }
 
-export function buildEnvironment(scene: THREE.Scene, path: TrackPath): EnvironmentHandles {
+export function buildEnvironment(scene: THREE.Scene, path: TrackPath, renderer: THREE.WebGLRenderer): EnvironmentHandles {
   const theme = path.def.theme;
   scene.background = new THREE.Color(theme.background);
   scene.fog = new THREE.Fog(theme.fog.color, theme.fog.near, theme.fog.far);
@@ -126,6 +129,26 @@ export function buildEnvironment(scene: THREE.Scene, path: TrackPath): Environme
   }));
   sky.name = 'daylight-sky';
   scene.add(sky);
+
+  // Bake this circuit's own sky into a reflection probe. Car paint, chrome and glass are polished
+  // enough to show what is above them, and without a probe they have nothing to show: they go flat
+  // grey and read as plastic. One prefiltered pass at load costs nothing per frame afterwards.
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const probeScene = new THREE.Scene();
+  probeScene.add(new THREE.Mesh(sky.geometry, sky.material));
+  // A sun disc in the probe, far brighter than the sky around it. Without one the reflection is a
+  // smooth gradient and a flat panel mirrors a single flat colour — technically a reflection, but
+  // it reads as matte paint. The hot spot is what sweeps across the bodywork as a car turns.
+  const sunDisc = new THREE.Mesh(new THREE.SphereGeometry(150, 16, 12),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color(26, 24.4, 21.2), toneMapped: false }));
+  sunDisc.position.copy(SUN_DIRECTION).multiplyScalar(1250);
+  probeScene.add(sunDisc);
+  const probe = pmrem.fromScene(probeScene, 0, 10, 4000);
+  scene.environment = probe.texture;
+  // Low, because the probe lights every standard material in the scene and the sun and hemisphere
+  // light already carry the exposure. The cars ask for more through their own envMapIntensity.
+  scene.environmentIntensity = 0.35;
+  pmrem.dispose();
   const terrain = theme.terrain === "sand" ? createSandTexture() : createGrassTexture();
   terrain.repeat.set(110, 110);
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(2400, 2400),
@@ -207,7 +230,6 @@ export function buildEnvironment(scene: THREE.Scene, path: TrackPath): Environme
     balloon.position.set(midX - 170 + i * 92, 65 + rand() * 45, midZ + 160 + rand() * 210);
     scene.add(balloon); balloons.push(balloon);
   }
-  const sunDirection = new THREE.Vector3(-0.45, 0.85, -0.3).normalize();
   const sunLight = new THREE.DirectionalLight(theme.sun.color, theme.sun.intensity);
   sunLight.castShadow = true;
   sunLight.shadow.mapSize.set(2048, 2048);
@@ -215,7 +237,7 @@ export function buildEnvironment(scene: THREE.Scene, path: TrackPath): Environme
   sunLight.shadow.bias = -0.0002; sunLight.shadow.normalBias = 0.025;
   scene.add(sunLight, sunLight.target,
     new THREE.HemisphereLight(theme.hemisphere.sky, theme.hemisphere.ground, theme.hemisphere.intensity));
-  const offset = sunDirection.multiplyScalar(110);
+  const offset = SUN_DIRECTION.clone().multiplyScalar(110);
   return {
     sunLight,
     update(dt, elapsed) {
