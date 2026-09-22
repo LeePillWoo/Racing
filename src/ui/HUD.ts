@@ -3,6 +3,7 @@ import type { Racer } from "../race/RaceManager";
 import { Speedometer } from "./Speedometer";
 import { MiniMap } from "./MiniMap";
 import { msToClock } from "../utils/MathUtils";
+import { DamageModel, WHEEL_PARTS } from "../vehicle/Damage";
 
 export interface HUDUpdateData {
   speedKmh: number;
@@ -22,6 +23,8 @@ export interface HUDUpdateData {
   rank: number;
   totalRacers: number;
   standings: Racer[];
+  /** Read live rather than copied, so the panel costs nothing per physics step. */
+  damage: DamageModel;
   dt: number;
 }
 
@@ -45,6 +48,10 @@ export class HUD {
   private readonly tachEl: HTMLElement;
   private readonly tachFillEl: HTMLElement;
   private readonly fpsEl: HTMLElement;
+  private readonly damageEl: HTMLElement;
+  private readonly damagePctEl: HTMLElement;
+  private readonly damagePips: HTMLElement[];
+  private readonly damageWings: HTMLElement[];
   private standingsSignature = "";
   private finishOverlay: HTMLElement | null = null;
 
@@ -61,6 +68,17 @@ export class HUD {
         </div>
       </div>
       <div class="hud-panel hud-lapcount" data-el="lapcount">LAP 1 / 3</div>
+      <div class="hud-panel hud-damage" data-el="damage">
+        <span class="label">DAMAGE <b data-el="damagepct">0%</b></span>
+        <div class="damage-car">
+          <div class="damage-wing" data-el="dmg-front"></div>
+          <div class="damage-shell">
+            <i data-el="dmg-1"></i><i data-el="dmg-0"></i>
+            <i data-el="dmg-3"></i><i data-el="dmg-2"></i>
+          </div>
+          <div class="damage-wing" data-el="dmg-rear"></div>
+        </div>
+      </div>
       <div class="hud-panel hud-standings">
         <span class="label">STANDINGS</span>
         <div data-el="standings"></div>
@@ -112,6 +130,11 @@ export class HUD {
     this.tachEl = this.root.querySelector('[data-el="tach"]')!;
     this.tachFillEl = this.root.querySelector('[data-el="tachfill"]')!;
     this.fpsEl = this.root.querySelector('[data-el="fps"]')!;
+    this.damageEl = this.root.querySelector('[data-el="damage"]')!;
+    this.damagePctEl = this.root.querySelector('[data-el="damagepct"]')!;
+    // Bird's eye, nose up: the car's +X side is the driver's left, so it draws on the left.
+    this.damagePips = [0, 1, 2, 3].map(i => this.root.querySelector(`[data-el="dmg-${i}"]`)!);
+    this.damageWings = ["front", "rear"].map(side => this.root.querySelector(`[data-el="dmg-${side}"]`)!);
   }
 
   update(data: HUDUpdateData): void {
@@ -154,8 +177,33 @@ export class HUD {
       .join("");
     }
 
+    this.renderDamage(data.damage);
     this.minimap.render(data.standings);
   }
+
+  /** Corner pips and two wing bars, so a glance says what is bent and what has gone entirely. */
+  private renderDamage(model: DamageModel): void {
+    let worst = 0;
+    for (let i = 0; i < 4; i++) {
+      const value = Math.min(1, model.corners[i]);
+      worst = Math.max(worst, value);
+      const pip = this.damagePips[i];
+      pip.style.opacity = String(0.25 + value * 0.75);
+      pip.classList.toggle("hurt", value > 0.15);
+      pip.classList.toggle("gone", model.has(WHEEL_PARTS[i]));
+    }
+    this.damageWings[0].classList.toggle("gone", model.has("front-wing"));
+    this.damageWings[1].classList.toggle("gone", model.has("rear-wing"));
+    const percent = Math.round(worst * 100);
+    if (percent !== this.lastDamagePercent) {
+      this.lastDamagePercent = percent;
+      this.damagePctEl.textContent = percent + "%";
+      this.damageEl.classList.toggle("critical", percent >= 70);
+      this.damageEl.classList.toggle("scratched", percent > 0);
+    }
+  }
+
+  private lastDamagePercent = -1;
 
   setFps(fps: number): void {
     this.fpsEl.textContent = `${Math.round(fps)} FPS`;

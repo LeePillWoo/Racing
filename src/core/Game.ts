@@ -8,6 +8,7 @@ import { buildGroundCollider } from "../track/TrackColliders";
 import { Vehicle } from "../vehicle/Vehicle";
 import { InputManager } from "./InputManager";
 import { DEFAULT_VEHICLE_CONFIG } from "../vehicle/VehicleConfig";
+import { CARS, CarModel, DEFAULT_CAR } from "../vehicle/CarCatalog";
 import { ChaseCamera } from "../camera/ChaseCamera";
 import { RaceManager, Racer } from "../race/RaceManager";
 import { AIController, randomAIPersonality } from "../ai/AIController";
@@ -56,7 +57,8 @@ export class Game {
   private readonly countdownEl = document.getElementById("countdown")!;
 
   constructor(private readonly canvas: HTMLCanvasElement, private readonly uiRoot: HTMLElement,
-              private readonly track: TrackDef = DEFAULT_TRACK) {
+              private readonly track: TrackDef = DEFAULT_TRACK,
+              private readonly car: CarModel = DEFAULT_CAR) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -103,14 +105,20 @@ export class Game {
     onProgress(0.45, "관중석과 서킷 환경 구성 중");
     this.environment = buildEnvironment(this.scene, this.path);
     onProgress(0.65, "12대의 포뮬러 차량 준비 중");
+    const OPPONENT_SHELLS = CARS.filter(model => model.id !== this.car.id);
     const grid = this.buildStartGrid(12);
     const playerSlot = grid[11];
-    this.playerVehicle = new Vehicle(rapier, this.physics.world, this.scene, playerSlot.position, playerSlot.yawRad, PLAYER_COLOR);
+    this.playerVehicle = new Vehicle(rapier, this.physics.world, this.scene, playerSlot.position, playerSlot.yawRad,
+      this.car.paint.body, DEFAULT_VEHICLE_CONFIG, this.car);
     this.raceManager = new RaceManager(this.path, this.track.laps);
     this.playerRacer = this.raceManager.addRacer("player", "YOU", true, this.playerVehicle, PLAYER_COLOR);
     for (let i = 0; i < AI_NAMES.length; i++) {
       const slot = grid[i], color = AI_COLORS[i];
-      const vehicle = new Vehicle(rapier, this.physics.world, this.scene, slot.position, slot.yawRad, color);
+      // Deal the shells round-robin, skipping the one the player took, so the grid is a mixed
+      // field rather than twelve copies of the same car in different colours.
+      const shell = OPPONENT_SHELLS[i % OPPONENT_SHELLS.length];
+      const vehicle = new Vehicle(rapier, this.physics.world, this.scene, slot.position, slot.yawRad,
+        color, DEFAULT_VEHICLE_CONFIG, shell);
       const racer = this.raceManager.addRacer("ai-" + i, AI_NAMES[i], false, vehicle, color);
       const controller = new AIController(this.path, this.racingLine, racer, randomAIPersonality(i + 1),
         this.raceManager.racers, r => this.raceManager.resetRacerToTrack(r));
@@ -266,7 +274,8 @@ export class Game {
       currentLapMs: this.raceManager.currentLapMs(this.playerRacer), bestLapMs: this.playerRacer.bestLapMs,
       lapNumber: this.playerRacer.highestLapFloor, totalLaps: this.track.laps,
       rank: this.playerRacer.rank, totalRacers: this.raceManager.racers.length,
-      standings: [...this.raceManager.racers].sort((a, b) => a.rank - b.rank), dt,
+      standings: [...this.raceManager.racers].sort((a, b) => a.rank - b.rank),
+      damage: this.playerVehicle.damage, dt,
     });
   }
 }

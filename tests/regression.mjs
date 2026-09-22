@@ -843,6 +843,30 @@ check("a wheel that has come off stops driving and stops gripping", () => {
   world.world.free();
 });
 
+const { CARS } = await import("../src/vehicle/CarCatalog.ts");
+const { buildCarMesh } = await import("../src/vehicle/CarMesh.ts");
+check("every car in the garage builds its own shell, with wings that can come off", () => {
+  const trianglesByStyle = new Map();
+  for (const model of CARS) {
+    const mesh = buildCarMesh(DEFAULT_VEHICLE_CONFIG, model.paint, model.style);
+    assert.equal(mesh.wheels.length, 4, model.id + " needs four wheels");
+    assert.ok(mesh.frontWing.children.length > 0, model.id + " needs a detachable front wing");
+    assert.ok(mesh.rearWing.children.length > 0, model.id + " needs a detachable rear wing");
+    assert.ok(mesh.brakeLights.length > 0, model.id + " needs a brake light");
+    let triangles = 0;
+    mesh.root.traverse(o => {
+      if (!o.isMesh) return;
+      triangles += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3;
+    });
+    const previous = trianglesByStyle.get(model.style);
+    if (previous === undefined) trianglesByStyle.set(model.style, triangles);
+    else assert.equal(triangles, previous, model.id + " should build the same shell as its stablemate");
+  }
+  assert.equal(trianglesByStyle.size, 4, "the garage should cover every shell");
+  assert.equal(new Set(trianglesByStyle.values()).size, 4, "each shell must really be a different model");
+  console.log(JSON.stringify({ shellTriangles: Object.fromEntries(trianglesByStyle) }));
+});
+
 const { Debris } = await import("../src/vfx/Debris.ts");
 check("debris falls, settles on the ground and is cleaned up", () => {
   const pile = new Debris();

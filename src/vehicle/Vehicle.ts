@@ -6,6 +6,7 @@ import { Drivetrain } from "./Drivetrain";
 import { DriftSystem } from "./DriftSystem";
 import { findWallContact } from "./WallBounce";
 import { buildCarMesh, CarMeshSet } from "./CarMesh";
+import { CarModel, DEFAULT_CAR } from "./CarCatalog";
 import { BROKEN_WHEEL_GRIP, BROKEN_WING_GRIP, CarPart, DamageModel, WHEEL_PARTS } from "./Damage";
 import { clamp, damp, lerp, smoothstep } from "../utils/MathUtils";
 import type { InputState } from "../core/InputManager";
@@ -112,7 +113,10 @@ export class Vehicle {
     spawnPosition: THREE.Vector3,
     spawnYawRad: number,
     color: THREE.ColorRepresentation,
-    config: VehicleConfig = DEFAULT_VEHICLE_CONFIG
+    config: VehicleConfig = DEFAULT_VEHICLE_CONFIG,
+    // The shell to wear. `color` still wins over the model's own body paint so a race can keep
+    // giving every car its own identity colour on the minimap and in the standings.
+    readonly car: CarModel = DEFAULT_CAR
   ) {
     this.rapier = rapier;
     this.world = world;
@@ -179,7 +183,7 @@ export class Vehicle {
     this.drivetrain = new Drivetrain(config.drivetrain, config.wheelRadius);
     this.drift = new DriftSystem(config.drift);
 
-    this.meshes = buildCarMesh(config, color);
+    this.meshes = buildCarMesh(config, { body: color, accent: car.paint.accent }, car.style);
     this.meshes.root.add(this.exhaust.root);
     scene.add(this.meshes.root);
   }

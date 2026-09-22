@@ -26,6 +26,10 @@ try {
   await page.waitForTimeout(600);
   assert.equal(await page.locator(".track-card").count(), 3, "the grid should offer three circuits");
   assert.equal(await page.locator(".track-card.selected").count(), 1);
+  assert.equal(await page.locator(".car-card").count(), 8, "the garage should offer eight cars");
+  assert.equal(await page.locator(".car-card.selected").count(), 1);
+  await page.locator('.car-card[data-car="hornet-v8"]').click();
+  assert.equal(await page.locator('.car-card[data-car="hornet-v8"]').getAttribute("aria-checked"), "true");
   await page.screenshot({ path: "artifacts/start-desktop.png" });
   await page.locator("#start-button").click();
   await page.waitForFunction(() => window.__racing && window.__racing.countdown === 0, null, { timeout: 90000 });
@@ -93,26 +97,43 @@ try {
     damage: window.__racing.playerVehicle.telemetry.damage,
     debris: window.__racing.debris.count,
     wingVisible: window.__racing.playerVehicle.meshes.frontWing.visible,
+    // The HUD has to say so too, or the player has no way to know what is bent.
+    readout: document.querySelector('[data-el="damagepct"]').textContent,
+    critical: document.querySelector('[data-el="damage"]').classList.contains("critical"),
+    goneMarkers: document.querySelectorAll('[data-el="damage"] .gone').length,
   }));
   assert.ok(crash.broken > 0, "a 150 km/h barrier hit should break something: " + JSON.stringify(crash));
   assert.ok(crash.debris > 0, "broken parts must appear as debris in the scene: " + JSON.stringify(crash));
   assert.equal(crash.wingVisible, false, "a broken front wing must stop being drawn on the car");
+  assert.notEqual(crash.readout, "0%", "the damage panel must report the hit: " + JSON.stringify(crash));
+  assert.equal(crash.critical, true, "a wrecked car should light the panel up");
+  assert.ok(crash.goneMarkers > 0, "the panel must mark the parts that have gone");
   await page.keyboard.press("KeyR");
   await page.waitForTimeout(400);
   const repaired = await page.evaluate(() => ({
     broken: window.__racing.playerVehicle.telemetry.brokenParts,
     wingVisible: window.__racing.playerVehicle.meshes.frontWing.visible,
+    readout: document.querySelector('[data-el="damagepct"]').textContent,
+    goneMarkers: document.querySelectorAll('[data-el="damage"] .gone').length,
   }));
   assert.equal(repaired.broken, 0, "the R recovery must put the car back together");
   assert.equal(repaired.wingVisible, true);
+  assert.equal(repaired.readout, "0%", "a repaired car must read zero damage");
+  assert.equal(repaired.goneMarkers, 0);
 
   const diagnostics = await page.evaluate(() => ({
     cars: window.__racing.raceManager.racers.length,
+    playerCar: window.__racing.playerVehicle.car.id,
+    shells: [...new Set(window.__racing.aiEntries.map(e => e.vehicle.car.style))].sort(),
+    playerShellOnGrid: window.__racing.aiEntries.filter(e => e.vehicle.car.id === window.__racing.playerVehicle.car.id).length,
     drawCalls: window.__racing.renderer.info.render.calls,
     triangles: window.__racing.renderer.info.render.triangles,
     ai: window.__racing.aiEntries.map(e => ({ name: e.racer.name, speed: e.vehicle.telemetry.speedKmh, progress: e.racer.distanceTraveled })),
   }));
   assert.equal(diagnostics.cars, 12);
+  assert.equal(diagnostics.playerCar, "hornet-v8", "the picked car must be the one you drive");
+  assert.ok(diagnostics.shells.length >= 3, "the grid must field a mixed set of shells: " + diagnostics.shells);
+  assert.equal(diagnostics.playerShellOnGrid, 0, "no opponent should be driving your exact car");
   await page.setViewportSize({ width: 640, height: 1138 });
   await page.keyboard.press("KeyR"); await page.waitForTimeout(700);
   await page.screenshot({ path: "artifacts/race-portrait.png" });

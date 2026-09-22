@@ -6,6 +6,12 @@ const MARK_HEIGHT = 0.038;
 const MIN_SEGMENT_LENGTH = 0.22;
 /** A wheel that stops slipping for longer than this breaks the ribbon instead of bridging a gap. */
 const TRACK_BREAK_SEC = 0.12;
+/**
+ * Longest quad the ribbon will draw. A tyre covers under a metre per frame at racing speed, so
+ * anything beyond this is a teleport or a frame the machine could not keep up with — and bridging
+ * it paints a black slab across the circuit rather than a tyre mark.
+ */
+const MAX_SEGMENT_LENGTH = 3.2;
 
 interface Emitter {
   x: number;
@@ -97,7 +103,7 @@ export class SkidMarks {
     const dx = x - emitter.x;
     const dz = z - emitter.z;
     const length = Math.hypot(dx, dz);
-    if (length > 8) { emitter.x = x; emitter.z = z; return; }
+    if (length > MAX_SEGMENT_LENGTH) { emitter.x = x; emitter.z = z; return; }
     if (length < MIN_SEGMENT_LENGTH) return;
 
     const nx = (-dz / length) * halfWidth;
