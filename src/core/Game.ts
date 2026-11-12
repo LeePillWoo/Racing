@@ -9,6 +9,7 @@ import { Vehicle } from "../vehicle/Vehicle";
 import { InputManager } from "./InputManager";
 import { DEFAULT_VEHICLE_CONFIG } from "../vehicle/VehicleConfig";
 import { CARS, CarModel, DEFAULT_CAR } from "../vehicle/CarCatalog";
+import { loadCarModels } from "../vehicle/CarMesh";
 import { ChaseCamera } from "../camera/ChaseCamera";
 import { RaceManager, Racer } from "../race/RaceManager";
 import { AIController, randomAIPersonality } from "../ai/AIController";
@@ -63,7 +64,6 @@ export class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.08;
     this.renderer.info.autoReset = false;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -103,8 +103,10 @@ export class Game {
     this.scene.add(this.debris.group);
     buildGroundCollider(rapier, this.physics.world, this.path);
     onProgress(0.45, "관중석과 서킷 환경 구성 중");
-    this.environment = buildEnvironment(this.scene, this.path, this.renderer);
-    onProgress(0.65, "12대의 포뮬러 차량 준비 중");
+    this.environment = await buildEnvironment(this.scene, this.path, this.renderer);
+    this.postFX.setGrade(this.track.theme.grade);
+    onProgress(0.65, "12대의 차량 준비 중");
+    await loadCarModels();
     const OPPONENT_SHELLS = CARS.filter(model => model.id !== this.car.id);
     const grid = this.buildStartGrid(12);
     const playerSlot = grid[11];

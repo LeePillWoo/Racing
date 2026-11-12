@@ -54,6 +54,35 @@ export function createAsphaltTexture(): THREE.CanvasTexture {
   return texture;
 }
 
+/**
+ * Tangent-space normal map of fine aggregate, derived from a random height field. Tiles, because
+ * the height lookup wraps.
+ */
+export function createAsphaltNormalMap(): THREE.CanvasTexture {
+  const size = 256;
+  const { canvas, ctx } = makeCanvas(size);
+  const rand = mulberry32(2024);
+  const height = new Float32Array(size * size);
+  for (let i = 0; i < 5200; i++) {
+    const x = Math.floor(rand() * size), y = Math.floor(rand() * size), bump = 0.35 + rand() * 0.65;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const index = ((y + dy + size) % size) * size + ((x + dx + size) % size);
+      height[index] = Math.max(height[index], bump * (dx || dy ? 0.5 : 1));
+    }
+  }
+  const image = ctx.createImageData(size, size);
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const at = (px: number, py: number): number => height[((py + size) % size) * size + ((px + size) % size)];
+    const normal = new THREE.Vector3(at(x - 1, y) - at(x + 1, y), at(x, y - 1) - at(x, y + 1), 0.6).normalize();
+    image.data.set([(normal.x * 0.5 + 0.5) * 255, (normal.y * 0.5 + 0.5) * 255, (normal.z * 0.5 + 0.5) * 255, 255], (y * size + x) * 4);
+  }
+  ctx.putImageData(image, 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.anisotropy = 8;
+  return texture;
+}
+
 /** Road centerline + edge marking texture, meant to be stretched once along the ribbon length (V) and once across width (U). */
 export function createRoadMarkingTexture(): THREE.CanvasTexture {
   const w = 128;
@@ -232,14 +261,33 @@ export function createSoftDotTexture(): THREE.CanvasTexture {
   return new THREE.CanvasTexture(canvas);
 }
 
-/** Deterministic, gently mottled grass for a bright parkland circuit. */
+/**
+ * Mown turf: soft light and dark blotches a few metres across under a dense scatter of blade
+ * strokes. Deliberately not the saturated green of the old flat fill — the sun and the grade add
+ * the colour now, and a ground that starts out neon has nowhere to go.
+ */
 export function createGrassTexture(): THREE.CanvasTexture {
-  const { canvas, ctx } = makeCanvas(256);
+  const size = 512;
+  const { canvas, ctx } = makeCanvas(size);
   const rand = mulberry32(519);
-  ctx.fillStyle = "#80b82a"; ctx.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 7000; i++) {
-    ctx.fillStyle = rand() > 0.5 ? "rgba(55,99,16,0.1)" : "rgba(180,209,71,0.15)";
-    ctx.fillRect(rand() * 256, rand() * 256, 1 + rand() * 3, 1 + rand() * 5);
+  ctx.fillStyle = "#6c9a34"; ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 90; i++) {
+    const x = rand() * size, y = rand() * size, r = 30 + rand() * 70;
+    // Drawn at every wrap offset so a blotch crossing the edge comes back in on the other side.
+    for (const ox of [-size, 0, size]) for (const oy of [-size, 0, size]) {
+      const blotch = ctx.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, r);
+      blotch.addColorStop(0, i % 2 ? "rgba(52,92,24,0.2)" : "rgba(150,178,70,0.18)");
+      blotch.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = blotch;
+      ctx.fillRect(x + ox - r, y + oy - r, r * 2, r * 2);
+    }
+  }
+  const blades = ["rgba(46,84,20,0.34)", "rgba(92,134,40,0.32)", "rgba(168,190,84,0.26)", "rgba(196,186,104,0.16)"];
+  ctx.lineWidth = 1.1;
+  for (let i = 0; i < 26000; i++) {
+    const x = rand() * size, y = rand() * size;
+    ctx.strokeStyle = blades[Math.floor(rand() * blades.length)];
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + (rand() - 0.5) * 3, y - 2 - rand() * 5); ctx.stroke();
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;

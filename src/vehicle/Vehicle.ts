@@ -186,6 +186,7 @@ export class Vehicle {
     this.drift = new DriftSystem(config.drift);
 
     this.meshes = buildCarMesh(config, { body: color, accent: car.paint.accent }, car.style);
+    this.exhaust.root.position.copy(this.meshes.exhaust);
     this.meshes.root.add(this.exhaust.root);
     scene.add(this.meshes.root);
   }
@@ -340,9 +341,12 @@ export class Vehicle {
       state.slipDeg = Math.max(Math.abs(slipAngle) * (180 / Math.PI), isRear && input.handbrake && speed > 1 ? 32 * smoothstep(1, 8, speed) : 0);
       const contactPoint = wheelGrounded ? this.controller.wheelContactPoint(i) : null;
       if (contactPoint) {
-        state.x = contactPoint.x;
+        // The shell draws its wheels inboard of where the physics has them, so the rubber it
+        // lays and the smoke it makes have to move in by the same amount to stay under the tyre.
+        const inset = Math.sign(local.x) * (config.trackHalfWidth - this.meshes.trackHalfWidth);
+        state.x = contactPoint.x - right.x * inset;
         state.y = contactPoint.y;
-        state.z = contactPoint.z;
+        state.z = contactPoint.z - right.z * inset;
       } else {
         state.grounded = false;
       }
@@ -542,7 +546,7 @@ export class Vehicle {
       const local = this.wheelLocal[i];
       const susLength = this.controller.wheelSuspensionLength(i) ?? this.config.suspensionRestLength;
       const wheelMesh = this.meshes.wheels[i];
-      wheelMesh.position.set(local.x, this.config.connectionPointY - susLength, local.z);
+      wheelMesh.position.set(Math.sign(local.x) * this.meshes.trackHalfWidth, this.config.connectionPointY - susLength, local.z);
 
       const steer = this.controller.wheelSteering(i) ?? 0;
       const spin = this.wheelSpin[i];

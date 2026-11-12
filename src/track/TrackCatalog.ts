@@ -18,13 +18,34 @@ export interface GroundPatch {
   kind: "sand" | "water" | "paddock" | "grass";
 }
 
+/** Final display-space colour pass. Tints are RGB multipliers, so [1, 1, 1] leaves a tone alone. */
+export interface ColorGrade {
+  saturation: number;
+  contrast: number;
+  shadows: [number, number, number];
+  highlights: [number, number, number];
+  /** How far the corners darken, 0 for none. */
+  vignette: number;
+}
+
 export interface TrackTheme {
   skyTop: string;
   skyBottom: string;
+  /** Haze band along the horizon, strongest on the sun's side. This is what makes a low sun read as low. */
+  horizonGlow: string;
+  /** Sunlit and shaded cloud colour, and where the cloud field starts: lower is more overcast. */
+  clouds: { lit: string; shade: string; cover: number };
   background: string;
   fog: { color: string; near: number; far: number };
   hemisphere: { sky: string; ground: string; intensity: number };
-  sun: { color: string; intensity: number };
+  /** Elevation in degrees above the horizon; azimuth in degrees from +Z towards +X. */
+  sun: { color: string; intensity: number; elevation: number; azimuth: number };
+  exposure: number;
+  grade: ColorGrade;
+  /** How hard the floodlight towers burn. 0 by day; above 0 once the sun is too low to light the road. */
+  floodlight: number;
+  /** The ring of hills that closes off the horizon. */
+  hills: string;
   /** Base terrain the whole site sits on. */
   terrain: "grass" | "sand";
   patches: GroundPatch[];
@@ -34,8 +55,6 @@ export interface TrackTheme {
   centerLine: boolean;
   /** Tall wire catch fencing on top of the barriers, versus a bare low wall. */
   catchFence: boolean;
-  /** Stacked tyre walls against the barrier, spaced this many metres apart; 0 for none. */
-  tyreWallSpacing: number;
   trees: number;
   /** Arc-length positions of grandstands, and which side of the road they sit on. */
   grandstands: { u: number; side: 1 | -1 }[];
@@ -59,13 +78,59 @@ export interface TrackDef {
   theme: TrackTheme;
 }
 
-const PARKLAND_SKY: Pick<TrackTheme, "skyTop" | "skyBottom" | "background" | "fog" | "hemisphere" | "sun"> = {
-  skyTop: "#38a7eb",
-  skyBottom: "#d9f3ff",
-  background: "#b7e0f5",
-  fog: { color: "#d6edf2", near: 260, far: 1050 },
-  hemisphere: { sky: "#c5e7ff", ground: "#779440", intensity: 1.6 },
-  sun: { color: "#fff8ed", intensity: 2.5 },
+type Mood = Pick<TrackTheme, "skyTop" | "skyBottom" | "horizonGlow" | "clouds" | "background" | "fog" | "hemisphere" | "sun"
+  | "exposure" | "grade" | "floodlight" | "hills">;
+
+/**
+ * Late afternoon, sun low and dead ahead on the main straight. Everything the sun touches goes
+ * amber and everything it misses goes blue, so the shadows have to be cool and the fill weak —
+ * raise the hemisphere light and the warmth washes straight out.
+ */
+const GOLDEN_HOUR: Mood = {
+  skyTop: "#3d6fb3",
+  skyBottom: "#f6cf9a",
+  horizonGlow: "#ffae5c",
+  clouds: { lit: "#ffe6c4", shade: "#8d86a3", cover: 0.5 },
+  background: "#f0cb9c",
+  fog: { color: "#dcb68c", near: 210, far: 1350 },
+  hemisphere: { sky: "#a9c3f0", ground: "#7d6a3f", intensity: 0.85 },
+  sun: { color: "#ffc078", intensity: 3.4, elevation: 13, azimuth: -27 },
+  exposure: 1.02,
+  grade: { saturation: 1.1, contrast: 1.07, shadows: [0.9, 0.95, 1.1], highlights: [1.07, 1.0, 0.9], vignette: 0.3 },
+  floodlight: 0,
+  hills: "#5d6b55",
+};
+
+/** High summer: hard sun, deep sky, crisp shadows. The bright one. */
+const SUMMER_NOON: Mood = {
+  skyTop: "#1f7fe0",
+  skyBottom: "#cfeaff",
+  horizonGlow: "#eef7ff",
+  clouds: { lit: "#ffffff", shade: "#a9b9cc", cover: 0.46 },
+  background: "#bfe2f7",
+  fog: { color: "#cfe6ee", near: 320, far: 1350 },
+  hemisphere: { sky: "#bfe0ff", ground: "#86a24a", intensity: 1.15 },
+  sun: { color: "#fff4e0", intensity: 3.1, elevation: 47, azimuth: -125 },
+  exposure: 1.0,
+  grade: { saturation: 1.14, contrast: 1.06, shadows: [0.95, 1.0, 1.06], highlights: [1.03, 1.01, 0.97], vignette: 0.2 },
+  floodlight: 0,
+  hills: "#4f7a52",
+};
+
+/** Blue hour: the sun is on the horizon and the towers have taken over lighting the road. */
+const BLUE_HOUR: Mood = {
+  skyTop: "#16244f",
+  skyBottom: "#f08a62",
+  horizonGlow: "#ff7a45",
+  clouds: { lit: "#f3a48a", shade: "#3b3f66", cover: 0.48 },
+  background: "#8a6f86",
+  fog: { color: "#6f6688", near: 120, far: 950 },
+  hemisphere: { sky: "#7f93d6", ground: "#3a3340", intensity: 0.95 },
+  sun: { color: "#ff9a62", intensity: 1.5, elevation: 5, azimuth: -72 },
+  exposure: 1.1,
+  grade: { saturation: 1.12, contrast: 1.1, shadows: [0.88, 0.94, 1.16], highlights: [1.08, 0.99, 0.9], vignette: 0.38 },
+  floodlight: 1,
+  hills: "#2d3152",
 };
 
 export const TRACKS: TrackDef[] = [
@@ -83,13 +148,12 @@ export const TRACKS: TrackDef[] = [
       [245, -185], [160, -220], [80, -185], [40, -115], [0, -80],
     ],
     theme: {
-      ...PARKLAND_SKY,
+      ...GOLDEN_HOUR,
       terrain: "grass",
       patches: [],
       kerb: ["#e33740", "#f6f8fa"],
       centerLine: false,
       catchFence: true,
-      tyreWallSpacing: 0,
       trees: 210,
       grandstands: [{ u: 32, side: -1 }, { u: 105, side: -1 }, { u: 118, side: 1 }, { u: -68, side: -1 }],
       balloons: 5,
@@ -115,9 +179,7 @@ export const TRACKS: TrackDef[] = [
       [-545, 5], [-470, 75], [-410, 155], [-350, 238], [-265, 292],
     ],
     theme: {
-      ...PARKLAND_SKY,
-      fog: { color: "#dff0e8", near: 300, far: 1250 },
-      hemisphere: { sky: "#cdeaff", ground: "#8aa049", intensity: 1.7 },
+      ...SUMMER_NOON,
       terrain: "grass",
       patches: [
         { x: -300, z: -75, rx: 300, rz: 165, kind: "sand" },
@@ -128,7 +190,6 @@ export const TRACKS: TrackDef[] = [
       kerb: ["#e33740", "#f6f8fa"],
       centerLine: false,
       catchFence: false,
-      tyreWallSpacing: 0,
       trees: 260,
       grandstands: [{ u: 60, side: -1 }, { u: -90, side: -1 }],
       balloons: 3,
@@ -152,12 +213,7 @@ export const TRACKS: TrackDef[] = [
       [165, 130], [270, 150], [350, 80], [385, -40], [350, -150], [310, -205],
     ],
     theme: {
-      skyTop: "#2b5f8e",
-      skyBottom: "#c8d8e2",
-      background: "#9fb6c6",
-      fog: { color: "#c2d0da", near: 220, far: 900 },
-      hemisphere: { sky: "#b7ccdd", ground: "#4b4f52", intensity: 1.35 },
-      sun: { color: "#ffeed6", intensity: 2.1 },
+      ...BLUE_HOUR,
       terrain: "grass",
       patches: [
         { x: 35, z: -30, rx: 540, rz: 420, kind: "paddock" },
@@ -167,7 +223,6 @@ export const TRACKS: TrackDef[] = [
       kerb: ["#2f7fd0", "#f4f7fa"],
       centerLine: true,
       catchFence: false,
-      tyreWallSpacing: 46,
       trees: 40,
       grandstands: [],
       balloons: 0,
@@ -178,6 +233,15 @@ export const TRACKS: TrackDef[] = [
 ];
 
 export const DEFAULT_TRACK = TRACKS[0];
+
+/** What the ground is at a point: the last patch that covers it, or the base terrain. */
+export function groundAt(theme: TrackTheme, x: number, z: number): GroundPatch["kind"] {
+  let kind: GroundPatch["kind"] = theme.terrain;
+  for (const patch of theme.patches) {
+    if (((x - patch.x) / patch.rx) ** 2 + ((z - patch.z) / patch.rz) ** 2 < 1) kind = patch.kind;
+  }
+  return kind;
+}
 
 export function findTrack(id: string): TrackDef {
   return TRACKS.find(track => track.id === id) ?? DEFAULT_TRACK;

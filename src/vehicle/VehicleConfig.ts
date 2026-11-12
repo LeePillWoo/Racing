@@ -11,7 +11,6 @@ export interface VehicleConfig {
   spawnHeight: number;
 
   wheelRadius: number;
-  wheelWidth: number;
   trackHalfWidth: number;
   wheelBaseFront: number;
   wheelBaseRear: number;
@@ -109,7 +108,6 @@ export const DEFAULT_VEHICLE_CONFIG: VehicleConfig = {
   spawnHeight: 1.15,
 
   wheelRadius: 0.46,
-  wheelWidth: 0.43,
   trackHalfWidth: 1.14,
   wheelBaseFront: 1.55,
   wheelBaseRear: -1.45,

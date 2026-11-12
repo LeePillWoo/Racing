@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import { TrackPath } from "./TrackPath";
-import { GroundPatch } from "./TrackCatalog";
+import { GroundPatch, TrackTheme, groundAt } from "./TrackCatalog";
 import { barrierOffset } from "./RoadMesh";
+import { CROWD_PALETTE, dressTrackside, instances, loadTrackside, pose, prop } from "./Trackside";
 import { createGrassTexture, createSandTexture, createWaterNoiseTexture, createAsphaltTexture } from "../utils/Textures";
 
 export interface EnvironmentHandles {
@@ -10,8 +11,46 @@ export interface EnvironmentHandles {
   followSun(target: THREE.Vector3): void;
 }
 
-/** Where the sun sits. Shared by the light itself and by the reflection probe it has to match. */
-const SUN_DIRECTION = new THREE.Vector3(-0.45, 0.85, -0.3).normalize();
+/** Unit vector towards the sun. Shared by the sky, the light and the reflection probe, which all have to agree. */
+function sunDirection(sun: TrackTheme["sun"], minElevation = 0): THREE.Vector3 {
+  const elevation = THREE.MathUtils.degToRad(Math.max(sun.elevation, minElevation));
+  const azimuth = THREE.MathUtils.degToRad(sun.azimuth);
+  return new THREE.Vector3(Math.cos(elevation) * Math.sin(azimuth), Math.sin(elevation), Math.cos(elevation) * Math.cos(azimuth));
+}
+
+/** Smooth 2D value noise in 0..1, for anything that should clump rather than scatter evenly. */
+function noise(x: number, z: number): number {
+  const hash = (i: number, j: number): number => { const v = Math.sin(i * 127.1 + j * 311.7) * 43758.5453; return v - Math.floor(v); };
+  const ix = Math.floor(x), iz = Math.floor(z), fx = x - ix, fz = z - iz;
+  const sx = fx * fx * (3 - 2 * fx), sz = fz * fz * (3 - 2 * fz);
+  return THREE.MathUtils.lerp(THREE.MathUtils.lerp(hash(ix, iz), hash(ix + 1, iz), sx),
+    THREE.MathUtils.lerp(hash(ix, iz + 1), hash(ix + 1, iz + 1), sx), sz);
+}
+
+/**
+ * A ridge line circling the whole site, drawn as a flat silhouette that dissolves into the haze
+ * at its foot. The ground is a flat plane, and without something standing on its far edge the
+ * horizon is a ruled line where green meets sky.
+ */
+function ridge(cx: number, cz: number, radius: number, low: number, high: number, crest: THREE.Color, haze: THREE.Color, seed: number): THREE.Mesh {
+  const steps = 260, positions: number[] = [], colors: number[] = [], indices: number[] = [];
+  for (let i = 0; i <= steps; i++) {
+    // Sampled around a circle in noise space, so the last column meets the first without a seam.
+    const angle = ((i % steps) / steps) * Math.PI * 2, c = Math.cos(angle), n = Math.sin(angle);
+    const peak = low + (high - low) * (noise(c * 3 + seed, n * 3 + seed) * 0.55 + noise(c * 9 + seed, n * 9 - seed) * 0.3
+      + noise(c * 27 - seed, n * 27 + seed) * 0.15);
+    positions.push(cx + c * radius, -2, cz + n * radius, cx + c * radius, peak, cz + n * radius);
+    colors.push(haze.r, haze.g, haze.b, crest.r, crest.g, crest.b);
+    if (i < steps) indices.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 1, i * 2 + 3, i * 2 + 2);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  geometry.setIndex(indices);
+  // Unlit, with its haze baked into the vertex colours rather than left to the scene fog, which
+  // at this range would paint the whole ridge the exact colour of the sky behind it.
+  return new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, fog: false }));
+}
 
 function random(seed: number): () => number {
   return () => { seed = (Math.imul(seed, 1664525) + 1013904223) | 0; return (seed >>> 0) / 4294967296; };
@@ -55,13 +94,12 @@ function grandstand(scene: THREE.Scene, path: TrackPath, u: number, side: number
   const crowd = new THREE.InstancedMesh(new THREE.CapsuleGeometry(0.16, 0.32, 2, 5),
     new THREE.MeshStandardMaterial({ roughness: 1 }), 7 * 65);
   const dummy = new THREE.Object3D();
-  const palette = ["#edf1ea", "#233f67", "#e75555", "#f4c55e", "#558e9e", "#3c3948"];
   for (let row = 0; row < 7; row++) for (let i = 0; i < 65; i++) {
     const index = row * 65 + i;
     dummy.position.set(side * row * 1.3, 1.06 + row * 0.55, -28 + i * 0.87);
     dummy.scale.set(1, 0.85 + rand() * 0.35, 1); dummy.updateMatrix();
     crowd.setMatrixAt(index, dummy.matrix);
-    crowd.setColorAt(index, new THREE.Color(palette[Math.floor(rand() * palette.length)]));
+    crowd.setColorAt(index, new THREE.Color(CROWD_PALETTE[Math.floor(rand() * CROWD_PALETTE.length)]));
   }
   root.add(crowd);
   for (const z of [-29, 0, 29]) block(root, concrete, [0.18, 6.2, 0.18], [side * 8.4, 3.1, z]);
@@ -117,17 +155,72 @@ function patchMaterial(kind: GroundPatch["kind"]): THREE.MeshStandardMaterial {
   return pushBack(new THREE.MeshStandardMaterial({ map, roughness: 1 }), 4);
 }
 
-export function buildEnvironment(scene: THREE.Scene, path: TrackPath, renderer: THREE.WebGLRenderer): EnvironmentHandles {
+const SKY_FRAGMENT = /* glsl */ `
+uniform vec3 top;
+uniform vec3 bottom;
+uniform vec3 glow;
+uniform vec3 sunColor;
+uniform vec3 sunDir;
+uniform vec3 cloudLit;
+uniform vec3 cloudShade;
+uniform float cover;
+uniform float time;
+varying vec3 vDirection;
+float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float noise(vec2 p){
+  vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+  return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
+}
+float fbm(vec2 p){
+  float n=0.0, a=0.5;
+  for(int i=0;i<5;i++){n+=a*noise(p);p=p*2.03+vec2(7.1,3.4);a*=0.5;}
+  return n;
+}
+void main(){
+  vec3 d=normalize(vDirection);
+  float h=max(d.y,0.0);
+  float toSun=max(dot(d,sunDir),0.0);
+  vec3 color=mix(bottom,top,pow(h,0.4));
+  // Haze hugging the horizon, thickest under the sun, then the sun's own halo, corona and disc.
+  color=mix(color,glow,pow(1.0-h,7.0)*(0.3+0.7*toSun*toSun));
+  color+=glow*pow(toSun,14.0)*0.45;
+  color+=sunColor*(pow(toSun,160.0)*0.55+smoothstep(0.99955,0.9998,toSun)*9.0);
+  vec2 uv=d.xz/(h+0.26)*2.0+vec2(time,0.0);
+  float shape=fbm(uv*2.4+fbm(uv*0.8));
+  float cloud=smoothstep(cover,cover+0.25,shape)*smoothstep(0.015,0.12,h);
+  // Thick cloud is its own shade; thin cloud between you and the sun lights up from behind.
+  float thick=smoothstep(cover,cover+0.5,shape);
+  vec3 cloudColor=mix(cloudLit,cloudShade,thick*0.8)+sunColor*pow(toSun,5.0)*(1.0-thick)*0.6;
+  color=mix(color,cloudColor,cloud*0.93);
+  gl_FragColor=vec4(color,1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}`;
+
+/** Candela of one floodlight at full burn: enough to pool on the road under a 9 m mast. */
+const FLOOD_CANDELA = 1100;
+
+export async function buildEnvironment(scene: THREE.Scene, path: TrackPath, renderer: THREE.WebGLRenderer): Promise<EnvironmentHandles> {
   const theme = path.def.theme;
+  const library = await loadTrackside();
+  const sunDir = sunDirection(theme.sun);
+  renderer.toneMappingExposure = theme.exposure;
   scene.background = new THREE.Color(theme.background);
   scene.fog = new THREE.Fog(theme.fog.color, theme.fog.near, theme.fog.far);
   const sky = new THREE.Mesh(new THREE.SphereGeometry(1500, 32, 20), new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false,
-    uniforms: { time: { value: 0 }, top: { value: new THREE.Color(theme.skyTop) }, bottom: { value: new THREE.Color(theme.skyBottom) } },
+    uniforms: {
+      time: { value: 0 }, cover: { value: theme.clouds.cover }, sunDir: { value: sunDir },
+      top: { value: new THREE.Color(theme.skyTop) }, bottom: { value: new THREE.Color(theme.skyBottom) },
+      glow: { value: new THREE.Color(theme.horizonGlow) }, sunColor: { value: new THREE.Color(theme.sun.color) },
+      cloudLit: { value: new THREE.Color(theme.clouds.lit) }, cloudShade: { value: new THREE.Color(theme.clouds.shade) },
+    },
     vertexShader: "varying vec3 vDirection; void main(){vDirection=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}",
-    fragmentShader: "uniform vec3 top;\nuniform vec3 bottom;\nuniform float time;\nvarying vec3 vDirection;\nfloat hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }\nfloat noise(vec2 p){\n  vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);\n  return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);\n}\nfloat fbm(vec2 p){\n  float n=0.0, a=0.5;\n  for(int i=0;i<5;i++){n+=a*noise(p);p=p*2.03+vec2(7.1,3.4);a*=0.5;}\n  return n;\n}\nvoid main(){\n  vec3 d=normalize(vDirection);\n  float h=max(d.y,0.0);\n  vec3 color=mix(bottom,top,pow(h,0.32));\n  vec2 uv=d.xz/(h+0.26)*2.0+vec2(time,0.0);\n  float shape=fbm(uv*2.4+fbm(uv*0.8));\n  float cloud=smoothstep(0.43,0.68,shape)*smoothstep(0.015,0.12,h);\n  color=mix(color,vec3(1.2,1.23,1.25),cloud*0.93);\n  gl_FragColor=vec4(color,1.0);\n  #include <tonemapping_fragment>\n  #include <colorspace_fragment>\n}",
+    fragmentShader: SKY_FRAGMENT,
   }));
   sky.name = 'daylight-sky';
+  // Drawn first, so the hills beyond the dome's radius still land on top of it.
+  sky.renderOrder = -1;
   scene.add(sky);
 
   // Bake this circuit's own sky into a reflection probe. Car paint, chrome and glass are polished
@@ -136,12 +229,14 @@ export function buildEnvironment(scene: THREE.Scene, path: TrackPath, renderer: 
   const pmrem = new THREE.PMREMGenerator(renderer);
   const probeScene = new THREE.Scene();
   probeScene.add(new THREE.Mesh(sky.geometry, sky.material));
-  // A sun disc in the probe, far brighter than the sky around it. Without one the reflection is a
-  // smooth gradient and a flat panel mirrors a single flat colour — technically a reflection, but
-  // it reads as matte paint. The hot spot is what sweeps across the bodywork as a car turns.
-  const sunDisc = new THREE.Mesh(new THREE.SphereGeometry(150, 16, 12),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color(26, 24.4, 21.2), toneMapped: false }));
-  sunDisc.position.copy(SUN_DIRECTION).multiplyScalar(1250);
+  // A sun disc in the probe, far bigger and brighter than the one in the sky. Without one the
+  // reflection is a smooth gradient and a flat panel mirrors a single flat colour — technically a
+  // reflection, but it reads as matte paint. The hot spot is what sweeps across the bodywork as a car turns.
+  // Kept modest: with the sun low, a flat tail panel mirrors the disc straight into the chase camera,
+  // and a disc as hot as the old overhead one turns the whole car into a bloom flare.
+  const sunDisc = new THREE.Mesh(new THREE.SphereGeometry(100, 16, 12),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color(theme.sun.color).multiplyScalar(theme.sun.intensity * 3), toneMapped: false }));
+  sunDisc.position.copy(sunDir).multiplyScalar(1250);
   probeScene.add(sunDisc);
   const probe = pmrem.fromScene(probeScene, 0, 10, 4000);
   scene.environment = probe.texture;
@@ -149,12 +244,39 @@ export function buildEnvironment(scene: THREE.Scene, path: TrackPath, renderer: 
   // light already carry the exposure. The cars ask for more through their own envMapIntensity.
   scene.environmentIntensity = 0.35;
   pmrem.dispose();
+
+  // Scatter across the actual footprint of this circuit, not a fixed box around the origin.
+  const samples = path.getSamplePoints();
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const p of samples) {
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+    minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+  }
+  const spanX = maxX - minX + 380, spanZ = maxZ - minZ + 380;
+  const midX = (minX + maxX) / 2, midZ = (minZ + maxZ) / 2;
+
   const terrain = theme.terrain === "sand" ? createSandTexture() : createGrassTexture();
-  terrain.repeat.set(110, 110);
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(2400, 2400),
-    pushBack(new THREE.MeshStandardMaterial({ map: terrain, roughness: 1 }), 8));
-  ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true;
+  terrain.repeat.set(220, 220);
+  // One tile repeated 220 times reads as wallpaper from the chase camera. A slow drift between
+  // lush and sun-dried, carried in vertex colour, breaks the repeat up for the cost of a few
+  // thousand vertices.
+  const groundGeometry = new THREE.PlaneGeometry(2400, 2400, 80, 80);
+  const groundPosition = groundGeometry.getAttribute("position"), tint: number[] = [];
+  for (let i = 0; i < groundPosition.count; i++) {
+    const x = groundPosition.getX(i), y = groundPosition.getY(i);
+    const dry = noise(x * 0.0045 + 9, y * 0.0045 + 9) * 0.7 + noise(x * 0.019, y * 0.019) * 0.3;
+    tint.push(0.8 + dry * 0.32, 0.92 + dry * 0.1, 0.86 - dry * 0.2);
+  }
+  groundGeometry.setAttribute("color", new THREE.Float32BufferAttribute(tint, 3));
+  const ground = new THREE.Mesh(groundGeometry,
+    pushBack(new THREE.MeshStandardMaterial({ map: terrain, roughness: 1, vertexColors: true }), 8));
+  ground.rotation.x = -Math.PI / 2; ground.position.set(midX, 0, midZ); ground.receiveShadow = true;
   scene.add(ground);
+
+  const haze = new THREE.Color(theme.fog.color);
+  const crest = new THREE.Color(theme.hills);
+  scene.add(ridge(midX, midZ, 1400, 150, 340, crest.clone().lerp(haze, 0.62), haze, 11),
+    ridge(midX, midZ, 1000, 40, 115, crest.clone().lerp(haze, 0.25), crest.clone().lerp(haze, 0.8), 3));
 
   // Ground patches: lakes, sand plateaus, the black paddock apron. Stacked a few millimetres
   // apart in list order so a later patch always wins over an earlier one without z-fighting.
@@ -169,39 +291,40 @@ export function buildEnvironment(scene: THREE.Scene, path: TrackPath, renderer: 
     if (patch.kind === "water") water.push(mesh);
   });
 
-  // Instanced vegetation keeps the trackside scenery inexpensive.
-  const rand = random(71), treeCount = theme.trees;
-  const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.15, 0.24, 3.4, 6),
-    new THREE.MeshStandardMaterial({ color: "#77604b", roughness: 1 }), Math.max(1, treeCount));
-  const crowns = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1),
-    new THREE.MeshStandardMaterial({ color: "#45822f", roughness: 1 }), Math.max(1, treeCount));
-  const dummy = new THREE.Object3D();
-  // Scatter across the actual footprint of this circuit, not a fixed box around the origin.
-  const samples = path.getSamplePoints();
-  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-  for (const p of samples) {
-    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
-    minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
-  }
-  const spanX = maxX - minX + 380, spanZ = maxZ - minZ + 380;
-  const midX = (minX + maxX) / 2, midZ = (minZ + maxZ) / 2;
+  // Woods rather than an orchard: a tree only stands where a slow noise field says there is a
+  // stand of them, which leaves clearings and sightlines instead of an even sprinkle. Three
+  // modelled spruces carry the close range; crossed-quad broadleaves fill in the mass behind them.
+  const rand = random(71), treeCount = theme.trees * 11;
+  const kinds = ["spruce-a", "spruce-b", "spruce-c", "tree-pine", "tree-maple", "tree-crab"];
+  const stands: THREE.Matrix4[][] = kinds.map(() => []);
   const clearance = barrierOffset(path) + 26;
-  let placed = 0;
-  for (let attempt = 0; attempt < treeCount * 14 && placed < treeCount; attempt++) {
+  for (let attempt = 0, placed = 0; attempt < treeCount * 12 && placed < treeCount; attempt++) {
     const p = new THREE.Vector3(midX + (rand() - 0.5) * spanX, 0, midZ + (rand() - 0.5) * spanZ);
-    if (path.projectPoint(p).distance < clearance) continue;
-    const scale = 0.8 + rand() * 1.4;
-    dummy.position.copy(p); dummy.position.y = 1.7 * scale;
-    dummy.scale.setScalar(scale); dummy.updateMatrix(); trunks.setMatrixAt(placed, dummy.matrix);
-    dummy.position.y = 4.4 * scale; dummy.scale.set(1.8 * scale, 2.8 * scale, 1.8 * scale);
-    dummy.rotation.y = rand() * Math.PI; dummy.updateMatrix(); crowns.setMatrixAt(placed, dummy.matrix);
-    crowns.setColorAt(placed, new THREE.Color().setHSL(0.24 + rand() * 0.07, 0.45, 0.28 + rand() * 0.1));
+    if (rand() > THREE.MathUtils.smoothstep(noise(p.x * 0.007 + 40, p.z * 0.007 + 40), 0.26, 0.56)) continue;
+    const fromRoad = path.projectPoint(p).distance;
+    if (groundAt(theme, p.x, p.z) !== "grass" || fromRoad < clearance) continue;
+    // The modelled trees go where the camera passes close; past that a billboard reads the same.
+    const kind = (fromRoad < clearance + 70 && rand() < 0.4 ? 0 : 3) + Math.floor(rand() * 3);
+    stands[kind].push(pose(p.x, p.z, rand() * Math.PI * 2, 0.75 + rand() * 0.7));
     placed++;
   }
-  trunks.count = crowns.count = placed; crowns.castShadow = true;
-  if (placed > 0) scene.add(trunks, crowns);
+  stands.forEach((poses, kind) => {
+    // Grouped by 160 m cell so each instanced run is one patch of woodland that can be culled.
+    const cell = (m: THREE.Matrix4): number => Math.floor(m.elements[12] / 160) * 1000 + Math.floor(m.elements[14] / 160);
+    poses.sort((a, b) => cell(a) - cell(b));
+    scene.add(instances(prop(library, kinds[kind]), poses));
+  });
   for (const stand of theme.grandstands) grandstand(scene, path, stand.u, stand.side, theme.banner);
   if (theme.pitBuilding) pitBuilding(scene, path, theme.pitBuilding.u, theme.pitBuilding.side, theme.banner);
+
+  const lamps = dressTrackside(scene, path, library);
+  // The lamp heads glow with the towers' own emissive map; a few real lights follow the player
+  // from mast to mast (see followSun) rather than every tower on the lap paying for one.
+  const lampHead = prop(library, "tower")[0].material as THREE.MeshStandardMaterial;
+  lampHead.emissive.set("#fff0d2");
+  lampHead.emissiveIntensity = theme.floodlight * 6;
+  const floods = theme.floodlight > 0 ? Array.from({ length: 4 }, () => new THREE.PointLight("#ffe3b8", 0, 0, 2)) : [];
+  if (floods.length > 0) scene.add(...floods);
 
   const f = path.frameAtDistance(8), gantry = new THREE.Group();
   gantry.position.copy(f.point); gantry.rotation.y = Math.atan2(f.tangent.x, f.tangent.z);
@@ -234,10 +357,12 @@ export function buildEnvironment(scene: THREE.Scene, path: TrackPath, renderer: 
   sunLight.castShadow = true;
   sunLight.shadow.mapSize.set(2048, 2048);
   Object.assign(sunLight.shadow.camera, { near: 5, far: 240, left: -55, right: 55, top: 55, bottom: -55 });
-  sunLight.shadow.bias = -0.0002; sunLight.shadow.normalBias = 0.025;
+  sunLight.shadow.bias = -0.0004; sunLight.shadow.normalBias = 0.05;
   scene.add(sunLight, sunLight.target,
     new THREE.HemisphereLight(theme.hemisphere.sky, theme.hemisphere.ground, theme.hemisphere.intensity));
-  const offset = SUN_DIRECTION.clone().multiplyScalar(110);
+  // The light never drops below 12 degrees even when the sun in the sky does. Any lower and one
+  // shadow-map texel covers metres of ground, and the whole road crawls with acne.
+  const offset = sunDirection(theme.sun, 12).multiplyScalar(110);
   return {
     sunLight,
     update(dt, elapsed) {
@@ -252,6 +377,16 @@ export function buildEnvironment(scene: THREE.Scene, path: TrackPath, renderer: 
       sunLight.position.copy(target).add(offset);
       sunLight.target.position.copy(target); sunLight.target.updateMatrixWorld();
       sky.position.set(target.x, 0, target.z);
+      if (floods.length === 0) return;
+      // Hand the lights to the masts nearest the player. Each fades out with distance, so by the
+      // time a mast drops out of the nearest four it is already dark and nothing pops.
+      lamps.sort((a, b) => a.distanceToSquared(target) - b.distanceToSquared(target));
+      floods.forEach((light, i) => {
+        const lamp = lamps[i];
+        if (!lamp) { light.intensity = 0; return; }
+        light.position.copy(lamp);
+        light.intensity = theme.floodlight * FLOOD_CANDELA * (1 - THREE.MathUtils.smoothstep(lamp.distanceTo(target), 70, 150));
+      });
     },
   };
 }

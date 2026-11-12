@@ -12,7 +12,9 @@ try { pw = await import("playwright"); } catch {
 }
 assert.ok(pw, "Install Playwright or provide the existing local browser tooling.");
 mkdirSync("artifacts", { recursive: true });
-const browser = await pw.chromium.launch({ headless: true });
+// Headless Chromium renders in software unless asked not to, and at one frame a second the
+// countdown alone outlasts the timeouts below. These flags put it on the real GPU when there is one.
+const browser = await pw.chromium.launch({ headless: true, args: ["--use-angle=d3d11", "--enable-gpu", "--ignore-gpu-blocklist", "--enable-unsafe-swiftshader"] });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const errors = [], warnings = [];
 page.on("pageerror", error => errors.push(error.message));
@@ -63,7 +65,7 @@ try {
   assert.equal(await page.evaluate(() => window.__racing.input.sample().boost), true);
   assert.equal(await page.evaluate(() => window.__racing.input.sample().handbrake), false);
   await page.waitForFunction(() => window.__racing.playerVehicle.telemetry.boosting);
-  assert.equal(await page.evaluate(() => window.__racing.playerVehicle.meshes.root.getObjectByName("exhaust-flame").children[1].visible), true);
+  assert.equal(await page.evaluate(() => window.__racing.playerVehicle.meshes.root.getObjectByName("exhaust-flame").children[0].visible), true);
   await page.waitForTimeout(600);
   await page.screenshot({ path: "artifacts/boost-desktop.png" });
   await page.keyboard.up("ShiftLeft");
@@ -283,8 +285,13 @@ try {
       laps: window.__racing.track.laps,
       offTrack: window.__racing.path.projectPoint(window.__racing.playerVehicle.position()).distance,
       drawCalls: window.__racing.renderer.info.render.calls,
+      props: window.__racing.scene.getObjectByName("trackside").children.reduce((sum, child) =>
+        sum + child.children.reduce((n, mesh) => n + (mesh.count ?? 0), 0), 0),
+      floodlights: window.__racing.scene.children.filter(child => child.isPointLight && child.intensity > 0).length,
     }));
     assert.equal(tours[id].track, id, "the picked circuit must be the one that loads");
+    assert.ok(tours[id].props > 500, "the trackside model must load and be laid out: " + tours[id].props);
+    assert.equal(tours[id].floodlights > 0, id === "infinity-drift", "only the blue-hour circuit burns its floodlights");
     await tour.screenshot({ path: `artifacts/track-${id}.png` });
     await tour.close();
   }

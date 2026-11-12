@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { TrackPath } from "./TrackPath";
-import { createAsphaltTexture } from "../utils/Textures";
+import { createAsphaltTexture, createAsphaltNormalMap } from "../utils/Textures";
 
 /** Clearance from the edge of the asphalt to the face of the barrier wall. */
 export const BARRIER_GAP = 4.5;
@@ -78,8 +78,14 @@ export function buildRoadMesh(path: TrackPath): THREE.Group {
     mesh.receiveShadow = true;
     group.add(mesh);
   }
-  ribbon(-halfWidth, halfWidth, 0.018,
-    new THREE.MeshStandardMaterial({ map: createAsphaltTexture(), color: "#ffffff", roughness: 0.98 }));
+  // Not quite matte, and with a grain: flat 0.98 asphalt gives a low sun nothing to catch, and the
+  // sheen running up the road towards the light is most of what sells the hour of day.
+  const grain = createAsphaltNormalMap();
+  grain.repeat.set(18, 9);
+  ribbon(-halfWidth, halfWidth, 0.018, new THREE.MeshStandardMaterial({
+    map: createAsphaltTexture(), color: "#ffffff", roughness: 0.84,
+    normalMap: grain, normalScale: new THREE.Vector2(0.22, 0.22),
+  }));
   const white = new THREE.MeshStandardMaterial({ color: "#f8fbff", roughness: 0.9 });
   const kerb = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 });
   for (const side of [-1, 1]) {
@@ -138,66 +144,26 @@ export function buildRoadMesh(path: TrackPath): THREE.Group {
     group.add(new THREE.Mesh(geometry, white));
   }
 
-  const segments = barrierSegments(path);
-  const wall = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1),
-    new THREE.MeshStandardMaterial({ color: "#dbe2e7", roughness: 0.85 }), segments.length);
-  const base = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1),
-    new THREE.MeshStandardMaterial({ color: "#1a242c", roughness: 0.85 }), segments.length);
-  const posts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.055, 2.1, 0.055),
-    new THREE.MeshStandardMaterial({ color: "#9caeb7", metalness: 0.5, roughness: 0.5 }), segments.length);
-  const wirePositions: number[] = [];
-  const dummy = new THREE.Object3D();
-  segments.forEach(({ a, b }, i) => {
-    dummy.position.copy(a).add(b).multiplyScalar(0.5);
-    dummy.position.y = 0.52;
-    dummy.rotation.set(0, Math.atan2(b.x - a.x, b.z - a.z), 0);
-    dummy.scale.set(0.42, 1.04, a.distanceTo(b) + 0.05);
-    dummy.updateMatrix(); wall.setMatrixAt(i, dummy.matrix);
-    dummy.position.y = 0.19; dummy.scale.y = 0.38; dummy.scale.x = 0.44; dummy.scale.z += 0.02;
-    dummy.updateMatrix(); base.setMatrixAt(i, dummy.matrix);
-    dummy.position.copy(a); dummy.position.y = 1.9; dummy.scale.set(1, 1, 1);
-    dummy.updateMatrix(); posts.setMatrixAt(i, dummy.matrix);
-    if (!theme.catchFence) return;
-    for (let y = 1.15; y <= 2.95; y += 0.3) wirePositions.push(a.x, y, a.z, b.x, y, b.z);
-    for (let j = 0; j < 8; j++) {
-      const p = a.clone().lerp(b, j / 8), q = a.clone().lerp(b, (j + 1) / 8);
-      wirePositions.push(p.x, 1.05, p.z, q.x, 2.95, q.z, q.x, 1.05, q.z, p.x, 2.95, p.z);
-    }
-  });
-  wall.receiveShadow = true;
-  group.add(wall, base);
+  // The barriers themselves are props, placed in Trackside.ts along these same segments.
   if (theme.catchFence) {
+    const segments = barrierSegments(path);
+    const posts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.055, 2.1, 0.055),
+      new THREE.MeshStandardMaterial({ color: "#9caeb7", metalness: 0.5, roughness: 0.5 }), segments.length);
+    const wirePositions: number[] = [];
+    const dummy = new THREE.Object3D();
+    segments.forEach(({ a, b }, i) => {
+      dummy.position.copy(a); dummy.position.y = 1.9;
+      dummy.updateMatrix(); posts.setMatrixAt(i, dummy.matrix);
+      for (let y = 1.15; y <= 2.95; y += 0.3) wirePositions.push(a.x, y, a.z, b.x, y, b.z);
+      for (let j = 0; j < 8; j++) {
+        const p = a.clone().lerp(b, j / 8), q = a.clone().lerp(b, (j + 1) / 8);
+        wirePositions.push(p.x, 1.05, p.z, q.x, 2.95, q.z, q.x, 1.05, q.z, p.x, 2.95, p.z);
+      }
+    });
     group.add(posts);
     const wireGeometry = new THREE.BufferGeometry();
     wireGeometry.setAttribute("position", new THREE.Float32BufferAttribute(wirePositions, 3));
-    group.add(new THREE.LineSegments(wireGeometry, new THREE.LineBasicMaterial({ color: "#8b9ba1", transparent: true, opacity: 0.3 })));
-  }
-
-  // Stacked tyres against the wall: the thing that makes a paddock read as a drift arena.
-  if (theme.tyreWallSpacing > 0) {
-    const stacks: { x: number; z: number }[] = [];
-    const offset = barrierOffset(path) - 1.4;
-    for (let u = 0; u < path.totalLength; u += theme.tyreWallSpacing) {
-      for (const side of [-1, 1]) {
-        const f = path.frameAtDistance(u);
-        const p = f.point.addScaledVector(f.right, side * offset);
-        if (path.overlapsRoadElsewhere(p, u, 3)) continue;
-        stacks.push({ x: p.x, z: p.z });
-      }
-    }
-    const tyres = new THREE.InstancedMesh(new THREE.TorusGeometry(0.42, 0.19, 6, 12),
-      new THREE.MeshStandardMaterial({ color: "#1d1f22", roughness: 1 }), stacks.length * 3);
-    stacks.forEach((stack, i) => {
-      for (let level = 0; level < 3; level++) {
-        dummy.position.set(stack.x, 0.2 + level * 0.36, stack.z);
-        dummy.rotation.set(-Math.PI / 2, 0, level * 0.7);
-        dummy.scale.set(1, 1, 1);
-        dummy.updateMatrix();
-        tyres.setMatrixAt(i * 3 + level, dummy.matrix);
-      }
-    });
-    tyres.castShadow = true;
-    group.add(tyres);
+    group.add(new THREE.LineSegments(wireGeometry, new THREE.LineBasicMaterial({ color: "#8b9ba1", transparent: true, opacity: 0.17 })));
   }
   return group;
 }

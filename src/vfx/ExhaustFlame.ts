@@ -1,6 +1,6 @@
 import * as THREE from "three";
 
-/** Attached to the exhaust: two additive tapered layers with a hot blue core. */
+/** Attached at the shell's own tailpipe: two additive tapered layers with a hot blue core. */
 export class ExhaustFlame {
   readonly root = new THREE.Group();
   private readonly plume = new THREE.Group();
@@ -8,11 +8,7 @@ export class ExhaustFlame {
 
   constructor() {
     this.root.name = "exhaust-flame";
-    this.root.position.set(0, 0.12, -2.22);
-    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.25, 12, 1, true),
-      new THREE.MeshStandardMaterial({ color: "#303440", metalness: 0.85, roughness: 0.3, side: THREE.DoubleSide }));
-    pipe.rotation.x = Math.PI / 2;
-    this.root.add(pipe, this.plume);
+    this.root.add(this.plume);
     for (const [radius, length, color, opacity] of [
       [0.28, 2.3, 0xff7020, 0.7], [0.14, 1.25, 0x9eeeff, 0.95],
     ]) {

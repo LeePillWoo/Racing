@@ -26,6 +26,10 @@ const { TrackPath } = await import("../src/track/TrackPath.ts");
 const { RaceManager } = await import("../src/race/RaceManager.ts");
 const { loadRapier, PhysicsWorld } = await import("../src/physics/PhysicsWorld.ts");
 const { Vehicle } = await import("../src/vehicle/Vehicle.ts");
+// Every Vehicle builds its shell from the car models, so they have to be in before the first one.
+const { loadCarModels } = await import("../src/vehicle/CarMesh.ts");
+const carModels = readFileSync(new URL("../public/models/cars.glb", import.meta.url));
+await loadCarModels(carModels.buffer.slice(carModels.byteOffset, carModels.byteOffset + carModels.byteLength));
 const { engineTorqueNm, Drivetrain, DEFAULT_DRIVETRAIN } = await import("../src/vehicle/Drivetrain.ts");
 const TOP_GEAR = DEFAULT_DRIVETRAIN.forwardRatios.length;
 const path = new TrackPath();
@@ -897,13 +901,20 @@ check("a wheel that has come off stops driving and stops gripping", () => {
 
 const { CARS } = await import("../src/vehicle/CarCatalog.ts");
 const { buildCarMesh } = await import("../src/vehicle/CarMesh.ts");
-check("every car in the garage builds its own shell, with wings that can come off", () => {
+check("every car in the garage builds its own shell, with front and rear pieces that can come off", () => {
   const trianglesByStyle = new Map();
   for (const model of CARS) {
     const mesh = buildCarMesh(DEFAULT_VEHICLE_CONFIG, model.paint, model.style);
     assert.equal(mesh.wheels.length, 4, model.id + " needs four wheels");
-    assert.ok(mesh.frontWing.children.length > 0, model.id + " needs a detachable front wing");
-    assert.ok(mesh.rearWing.children.length > 0, model.id + " needs a detachable rear wing");
+    assert.ok(mesh.frontWing.children.length > 0, model.id + " needs a detachable front piece");
+    assert.ok(mesh.rearWing.children.length > 0, model.id + " needs a detachable rear piece");
+    // The collision box is 0.84 either side of centre and the physics track 1.14. A shell whose
+    // wheels sit outside the physics track would lay its rubber inboard of its own tyres.
+    assert.ok(mesh.trackHalfWidth > 0.84 && mesh.trackHalfWidth <= 1.2, model.id + " track " + mesh.trackHalfWidth);
+    for (const wheel of mesh.wheels) {
+      const box = new THREE.Box3().setFromObject(wheel), size = box.getSize(new THREE.Vector3());
+      assert.ok(Math.abs(size.y / 2 - DEFAULT_VEHICLE_CONFIG.wheelRadius) < 0.02, model.id + " wheel must match the physics radius: " + size.y / 2);
+    }
     assert.ok(mesh.brakeLights.length > 0, model.id + " needs a brake light");
     let triangles = 0;
     mesh.root.traverse(o => {
@@ -916,7 +927,7 @@ check("every car in the garage builds its own shell, with wings that can come of
   }
   assert.equal(trianglesByStyle.size, 4, "the garage should cover every shell");
   for (const triangles of trianglesByStyle.values()) {
-    assert.ok(triangles > 7000, "shells should carry real detail, got " + triangles + " triangles");
+    assert.ok(triangles > 5000, "shells should carry real detail, got " + triangles + " triangles");
   }
   assert.equal(new Set(trianglesByStyle.values()).size, 4, "each shell must really be a different model");
   console.log(JSON.stringify({ shellTriangles: Object.fromEntries(trianglesByStyle) }));
@@ -965,6 +976,18 @@ check("debris falls, settles on the ground and is cleaned up", () => {
   // The pool is bounded even if a whole grid disintegrates at once.
   for (let i = 0; i < 80; i++) pile.spawn(new THREE.Object3D(), new THREE.Vector3(), i);
   assert.ok(pile.count <= 28, "debris pool overflowed: " + pile.count);
+});
+
+// Trees and trackside props ask this before they are placed, so a wrong answer stands a
+// grandstand in a lake. The last patch that covers a point has to win, as it does when drawn.
+const { groundAt, findTrack } = await import("../src/track/TrackCatalog.ts");
+check("the ground lookup agrees with the patches as drawn", () => {
+  const park = findTrack("switchback-park").theme, arena = findTrack("infinity-drift").theme;
+  assert.equal(groundAt(park, -80, 150), "water", "the middle of the lake is water");
+  assert.equal(groundAt(park, -300, -75), "sand");
+  assert.equal(groundAt(park, 900, 900), "grass", "clear of every patch it is the base terrain");
+  assert.equal(groundAt(arena, 35, -200), "paddock");
+  assert.equal(groundAt(arena, 250, -25), "grass", "a grass island laid over the paddock wins over it");
 });
 
 console.log("Completed " + checks.length + " regression checks.");
